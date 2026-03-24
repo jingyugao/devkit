@@ -1,0 +1,6 @@
+/.git/
+/.gocache/
+/.gomodcache/
+/.gopath/
+/keeprun
+/.DS_Store
