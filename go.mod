@@ -1,4 +1,4 @@
-module keeprun
+module github.com/jingyugao/keep-run
 
 go 1.26.0
 

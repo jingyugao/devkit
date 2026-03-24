@@ -13,13 +13,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"keeprun/internal/client"
-	"keeprun/internal/config"
-	"keeprun/internal/daemon"
-	"keeprun/internal/daemonctl"
-	"keeprun/internal/durationutil"
-	"keeprun/internal/ipc"
-	"keeprun/internal/task"
+	"github.com/jingyugao/keep-run/internal/client"
+	"github.com/jingyugao/keep-run/internal/config"
+	"github.com/jingyugao/keep-run/internal/daemon"
+	"github.com/jingyugao/keep-run/internal/daemonctl"
+	"github.com/jingyugao/keep-run/internal/durationutil"
+	"github.com/jingyugao/keep-run/internal/ipc"
+	"github.com/jingyugao/keep-run/internal/task"
 )
 
 var reservedSubcommands = map[string]struct{}{
