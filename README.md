@@ -44,7 +44,7 @@ keeprun sh -lc 'python app.py >> app.log 2>&1'
 ### Install with Go
 
 ```bash
-go install github.com/jingyugao/keep-run@latest
+go install github.com/jingyugao/keep-run/cmd/keeprun@latest
 ```
 
 This installs `keeprun` into your Go bin directory, usually:
@@ -59,7 +59,7 @@ Make sure that directory is on your `PATH`.
 ```bash
 git clone https://github.com/jingyugao/keep-run.git
 cd keep-run
-go build -o keeprun .
+go build -o keeprun ./cmd/keeprun
 ```
 
 ## Quick start

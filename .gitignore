@@ -1,4 +1,5 @@
 /.git/
+/.bin/
 /.gocache/
 /.gomodcache/
 /.gopath/
