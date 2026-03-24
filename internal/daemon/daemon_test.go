@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"keeprun/internal/client"
-	"keeprun/internal/config"
-	"keeprun/internal/ipc"
-	"keeprun/internal/storage"
-	"keeprun/internal/task"
+	"github.com/jingyugao/keep-run/internal/client"
+	"github.com/jingyugao/keep-run/internal/config"
+	"github.com/jingyugao/keep-run/internal/ipc"
+	"github.com/jingyugao/keep-run/internal/storage"
+	"github.com/jingyugao/keep-run/internal/task"
 )
 
 func TestCreateStopStartRemoveLifecycle(t *testing.T) {

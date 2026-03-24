@@ -20,12 +20,12 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"keeprun/internal/config"
-	"keeprun/internal/durationutil"
-	"keeprun/internal/ipc"
-	"keeprun/internal/paths"
-	"keeprun/internal/storage"
-	"keeprun/internal/task"
+	"github.com/jingyugao/keep-run/internal/config"
+	"github.com/jingyugao/keep-run/internal/durationutil"
+	"github.com/jingyugao/keep-run/internal/ipc"
+	"github.com/jingyugao/keep-run/internal/paths"
+	"github.com/jingyugao/keep-run/internal/storage"
+	"github.com/jingyugao/keep-run/internal/task"
 )
 
 type Server struct {

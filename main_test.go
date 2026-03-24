@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"keeprun/internal/config"
+	"github.com/jingyugao/keep-run/internal/config"
 )
 
 func TestParseRunRequestUsesDefaultsAndOverrides(t *testing.T) {
