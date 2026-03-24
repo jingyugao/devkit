@@ -36,12 +36,23 @@ keeprun sh -lc 'python app.py >> app.log 2>&1'
 
 ## Installation
 
-This repository currently uses a local Go module path, so the simplest installation flow is to clone and build it locally.
-
 ### Requirements
 
 - Go 1.26+
 - macOS or Linux
+
+### Install with Go
+
+```bash
+go install github.com/jingyugao/keep-run@latest
+```
+
+This installs `keeprun` into your Go bin directory, usually:
+
+- `$(go env GOPATH)/bin`
+- or `$(go env GOBIN)` if you set it explicitly
+
+Make sure that directory is on your `PATH`.
 
 ### Build from source
 
@@ -49,18 +60,6 @@ This repository currently uses a local Go module path, so the simplest installat
 git clone https://github.com/jingyugao/keep-run.git
 cd keep-run
 go build -o keeprun .
-```
-
-You can then move `./keeprun` somewhere on your `PATH`, for example:
-
-```bash
-mv keeprun ~/bin/
-```
-
-Or install into your Go bin directory from the checked-out repo:
-
-```bash
-go install .
 ```
 
 ## Quick start
