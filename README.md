@@ -15,7 +15,8 @@ It is designed for long-running, non-interactive processes such as:
 
 - Run a command in the background and track it as a named task
 - Optional wall-clock lifetime such as `3d`, `12h`, or `1h30m`
-- Optional restart after user login
+- Automatic restart after process exit
+- Automatic task rehydration when the `keeprun` daemon starts again
 - List tasks, stop/start them, delete them, and inspect logs
 - Global default config similar to `git config`
 - macOS `LaunchAgent` support
@@ -70,10 +71,10 @@ Run a command as a managed background task:
 keeprun python httpserver.py
 ```
 
-Run with a name, a 3-day lifetime, and restart after login:
+Run with a name and a 3-day lifetime:
 
 ```bash
-keeprun --name httpserver --life 3d --run-after-restart=true python httpserver.py
+keeprun --name httpserver --life 3d python httpserver.py
 ```
 
 List all tasks:
@@ -105,6 +106,7 @@ Stop, start, and remove a task:
 ```bash
 keeprun stop httpserver
 keeprun start httpserver
+keeprun start --all
 keeprun rm httpserver
 ```
 
@@ -129,7 +131,6 @@ Use `keeprun run -- ...` if your command name collides with a management subcomm
 
 - `--name <name>`: optional unique task name
 - `--life <duration>`: max wall-clock life such as `30m`, `12h`, `3d`, `2w`
-- `--run-after-restart=true|false`: restart task after user login
 - `--cwd <dir>`: working directory for the command
 - `--env KEY=VALUE`: add or override an environment variable
 - `--env-pass KEY`: copy a variable from the current shell into the saved task environment
@@ -140,6 +141,7 @@ Use `keeprun run -- ...` if your command name collides with a management subcomm
 keeprun ls
 keeprun ps
 keeprun start <id|name>
+keeprun start --all
 keeprun stop <id|name>
 keeprun rm <id|name> [--force]
 keeprun logs <id|name> [-f] [--lines N]
@@ -159,7 +161,6 @@ Global config is stored at:
 Supported config keys:
 
 - `defaults.life`
-- `defaults.run_after_restart`
 - `defaults.stop_timeout`
 - `defaults.env_pass`
 - `logs.tail_lines`
@@ -169,7 +170,6 @@ Built-in defaults:
 ```toml
 [defaults]
 life = ""
-run_after_restart = false
 stop_timeout = "10s"
 env_pass = []
 
@@ -181,7 +181,6 @@ Examples:
 
 ```bash
 keeprun config set defaults.life 3d
-keeprun config set defaults.run_after_restart true
 keeprun config set defaults.env_pass VIRTUAL_ENV,PYENV_VERSION
 keeprun config set logs.tail_lines 500
 keeprun config list
@@ -206,10 +205,12 @@ Important paths:
 ## Daemon behavior
 
 - The first mutating command installs or starts the per-user daemon automatically
-- Tasks marked with `--run-after-restart=true` are restarted after the next user login
+- Tasks restart automatically after process exit unless you stop them manually
+- Tasks with `desired_state=running` are started automatically when the daemon starts again
 - `life` is a wall-clock deadline, not accumulated runtime
 - When a task expires, it is stopped and marked `expired`
 - Logs are stored as combined stdout/stderr with timestamps
+- `keeprun ls` shows how many times each task has been restarted
 
 You can also manage the daemon explicitly:
 
@@ -248,6 +249,5 @@ Use config defaults so later runs are shorter:
 
 ```bash
 keeprun config set defaults.life 3d
-keeprun config set defaults.run_after_restart true
 keeprun --name job python job.py
 ```

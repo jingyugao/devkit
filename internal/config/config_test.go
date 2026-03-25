@@ -14,9 +14,6 @@ func TestSaveLoadAndMutateConfig(t *testing.T) {
 	if err := Set(&cfg, "defaults.life", "3d"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Set(&cfg, "defaults.run_after_restart", "true"); err != nil {
-		t.Fatal(err)
-	}
 	if err := Set(&cfg, "defaults.env_pass", "VIRTUAL_ENV,PYENV_VERSION"); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +31,7 @@ func TestSaveLoadAndMutateConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Defaults.Life != "3d" || !loaded.Defaults.RunAfterRestart || loaded.Logs.TailLines != 50 {
+	if loaded.Defaults.Life != "3d" || loaded.Logs.TailLines != 50 {
 		t.Fatalf("unexpected loaded config: %#v", loaded)
 	}
 

@@ -7,16 +7,19 @@ type ErrorResponse struct {
 }
 
 type CreateTaskRequest struct {
-	Name            string            `json:"name"`
-	Argv            []string          `json:"argv"`
-	Cwd             string            `json:"cwd"`
-	Env             map[string]string `json:"env"`
-	Life            string            `json:"life"`
-	RunAfterRestart bool              `json:"run_after_restart"`
+	Name string            `json:"name"`
+	Argv []string          `json:"argv"`
+	Cwd  string            `json:"cwd"`
+	Env  map[string]string `json:"env"`
+	Life string            `json:"life"`
 }
 
 type StartStopResponse struct {
 	Task task.Record `json:"task"`
+}
+
+type StartAllResponse struct {
+	Tasks []task.Record `json:"tasks"`
 }
 
 type ListTasksResponse struct {
