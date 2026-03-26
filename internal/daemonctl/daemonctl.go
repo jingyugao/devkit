@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jingyugao/keep-run/internal/client"
-	"github.com/jingyugao/keep-run/internal/service"
+	"github.com/jingyugao/devkit/internal/client"
+	"github.com/jingyugao/devkit/internal/service"
 )
 
 func Ensure(ctx context.Context, persist bool) error {

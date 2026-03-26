@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jingyugao/keep-run/internal/paths"
+	"github.com/jingyugao/devkit/internal/paths"
 )
 
 func TestSaveLoadAndMutateConfig(t *testing.T) {
@@ -12,9 +12,6 @@ func TestSaveLoadAndMutateConfig(t *testing.T) {
 
 	cfg := Builtins()
 	if err := Set(&cfg, "defaults.life", "3d"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Set(&cfg, "defaults.run_after_restart", "true"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Set(&cfg, "defaults.env_pass", "VIRTUAL_ENV,PYENV_VERSION"); err != nil {
@@ -34,7 +31,7 @@ func TestSaveLoadAndMutateConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Defaults.Life != "3d" || !loaded.Defaults.RunAfterRestart || loaded.Logs.TailLines != 50 {
+	if loaded.Defaults.Life != "3d" || loaded.Logs.TailLines != 50 {
 		t.Fatalf("unexpected loaded config: %#v", loaded)
 	}
 

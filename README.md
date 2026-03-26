@@ -1,38 +1,9 @@
-# keep-run
+# devkit
 
-`keeprun` is a small Go CLI for turning a command into a managed background task.
+`devkit` is a multi-tool Go repository. The current binaries are:
 
-It is designed for long-running, non-interactive processes such as:
-
-- `python httpserver.py`
-- local API servers
-- sync workers
-- scripts that should keep running after you close the terminal
-
-`keeprun` stores task state under `~/.config/keeprun/`, starts a per-user daemon, and can restore selected tasks after login on macOS and Linux.
-
-## Features
-
-- Run a command in the background and track it as a named task
-- Optional wall-clock lifetime such as `3d`, `12h`, or `1h30m`
-- Optional restart after user login
-- List tasks, stop/start them, delete them, and inspect logs
-- Global default config similar to `git config`
-- macOS `LaunchAgent` support
-- Linux `systemd --user` support
-
-## Limitations
-
-- Non-interactive tasks only
-- Commands are executed directly, not through a shell
-- Windows is not supported in v1
-- Linux support assumes `systemd --user` is available
-
-If you need shell features such as pipes, redirects, or shell expansion, wrap the command explicitly:
-
-```bash
-keeprun sh -lc 'python app.py >> app.log 2>&1'
-```
+- `keeprun`: run and supervise long-lived local commands in the background
+- `xrun`: launch database/queue CLIs with stored connection profiles and encrypted secrets
 
 ## Installation
 
@@ -44,77 +15,49 @@ keeprun sh -lc 'python app.py >> app.log 2>&1'
 ### Install with Go
 
 ```bash
-go install github.com/jingyugao/keep-run/cmd/keeprun@latest
+go install github.com/jingyugao/devkit/cmd/keeprun@latest
+go install github.com/jingyugao/devkit/cmd/xrun@latest
 ```
 
-This installs `keeprun` into your Go bin directory, usually:
-
-- `$(go env GOPATH)/bin`
-- or `$(go env GOBIN)` if you set it explicitly
-
-Make sure that directory is on your `PATH`.
-
-### Build from source
+### Build from Source
 
 ```bash
-git clone https://github.com/jingyugao/keep-run.git
-cd keep-run
+git clone https://github.com/jingyugao/devkit.git
+cd devkit
 go build -o keeprun ./cmd/keeprun
+go build -o xrun ./cmd/xrun
 ```
 
-## Quick start
+## keeprun
 
-Run a command as a managed background task:
+`keeprun` turns a non-interactive command into a managed background task.
+
+### Features
+
+- Run a command in the background and track it as a named task
+- Optional wall-clock lifetime such as `3d`, `12h`, or `1h30m`
+- Automatic restart after process exit
+- Automatic task rehydration when the daemon starts again
+- List tasks, stop/start them, remove them, and inspect logs
+- Global default config similar to `git config`
+- macOS `LaunchAgent` support
+- Linux `systemd --user` support
+
+### Important Restrictions
+
+- Only non-interactive commands are supported
+- Commands are executed directly, not through a shell
+- Windows is not supported in v1
+- Linux support assumes `systemd --user` is available
+- Built-in `keeprun` subcommand names are reserved and cannot be launched as managed child commands, even with `keeprun run -- ...`
+
+If you need shell features such as pipes, redirects, or shell expansion, wrap the command explicitly:
 
 ```bash
-keeprun python httpserver.py
+keeprun sh -lc 'python app.py >> app.log 2>&1'
 ```
 
-Run with a name, a 3-day lifetime, and restart after login:
-
-```bash
-keeprun --name httpserver --life 3d --run-after-restart=true python httpserver.py
-```
-
-List all tasks:
-
-```bash
-keeprun ls
-```
-
-List running tasks only:
-
-```bash
-keeprun ps
-```
-
-View logs:
-
-```bash
-keeprun logs httpserver
-```
-
-Follow logs:
-
-```bash
-keeprun logs -f httpserver
-```
-
-Stop, start, and remove a task:
-
-```bash
-keeprun stop httpserver
-keeprun start httpserver
-keeprun rm httpserver
-```
-
-Force remove a running task:
-
-```bash
-keeprun rm --force httpserver
-```
-
-## Command usage
+### Usage
 
 Task creation supports both forms:
 
@@ -123,23 +66,21 @@ keeprun [run flags] <cmd> [args...]
 keeprun run [run flags] -- <cmd> [args...]
 ```
 
-Use `keeprun run -- ...` if your command name collides with a management subcommand such as `run`, `logs`, or `start`.
-
-### Run flags
+Run flags:
 
 - `--name <name>`: optional unique task name
 - `--life <duration>`: max wall-clock life such as `30m`, `12h`, `3d`, `2w`
-- `--run-after-restart=true|false`: restart task after user login
 - `--cwd <dir>`: working directory for the command
 - `--env KEY=VALUE`: add or override an environment variable
 - `--env-pass KEY`: copy a variable from the current shell into the saved task environment
 
-### Management commands
+Management commands:
 
 ```bash
 keeprun ls
 keeprun ps
 keeprun start <id|name>
+keeprun start --all
 keeprun stop <id|name>
 keeprun rm <id|name> [--force]
 keeprun logs <id|name> [-f] [--lines N]
@@ -148,28 +89,15 @@ keeprun daemon install|uninstall|status
 keeprun help
 ```
 
-## Configuration
+### Config and Data
 
-Global config is stored at:
-
-```text
-~/.config/keeprun/config.toml
-```
-
-Supported config keys:
-
-- `defaults.life`
-- `defaults.run_after_restart`
-- `defaults.stop_timeout`
-- `defaults.env_pass`
-- `logs.tail_lines`
+Global config is stored at `~/.config/keeprun/config.toml`.
 
 Built-in defaults:
 
 ```toml
 [defaults]
 life = ""
-run_after_restart = false
 stop_timeout = "10s"
 env_pass = []
 
@@ -177,77 +105,100 @@ env_pass = []
 tail_lines = 200
 ```
 
-Examples:
+Runtime data lives under `~/.config/keeprun/`:
 
-```bash
-keeprun config set defaults.life 3d
-keeprun config set defaults.run_after_restart true
-keeprun config set defaults.env_pass VIRTUAL_ENV,PYENV_VERSION
-keeprun config set logs.tail_lines 500
-keeprun config list
-```
+- `config.toml`
+- `tasks/<task-id>.json`
+- `logs/<task-id>.log`
+- `run/daemon.sock`
+- `run/daemon.pid`
 
-## Data layout
-
-`keeprun` stores runtime data under:
-
-```text
-~/.config/keeprun/
-```
-
-Important paths:
-
-- `~/.config/keeprun/config.toml`
-- `~/.config/keeprun/tasks/<task-id>.json`
-- `~/.config/keeprun/logs/<task-id>.log`
-- `~/.config/keeprun/run/daemon.sock`
-- `~/.config/keeprun/run/daemon.pid`
-
-## Daemon behavior
-
-- The first mutating command installs or starts the per-user daemon automatically
-- Tasks marked with `--run-after-restart=true` are restarted after the next user login
-- `life` is a wall-clock deadline, not accumulated runtime
-- When a task expires, it is stopped and marked `expired`
-- Logs are stored as combined stdout/stderr with timestamps
-
-You can also manage the daemon explicitly:
-
-```bash
-keeprun daemon install
-keeprun daemon status
-keeprun daemon uninstall
-```
-
-Platform integration:
-
-- macOS: `~/Library/LaunchAgents/com.keeprun.daemon.plist`
-- Linux: `~/.config/systemd/user/keeprund.service`
-
-## Examples
-
-Run a Python HTTP server for 3 days:
+### Examples
 
 ```bash
 keeprun --name httpserver --life 3d python httpserver.py
-```
-
-Run a project command from a specific directory:
-
-```bash
 keeprun --name api --cwd /path/to/project ./bin/api-server
-```
-
-Pass through virtualenv information:
-
-```bash
 keeprun --name worker --env-pass VIRTUAL_ENV --env-pass PATH python worker.py
+keeprun config set defaults.life 3d
+keeprun daemon status
 ```
 
-Use config defaults so later runs are shorter:
+## xrun
+
+`xrun` stores connection profiles and secrets, then launches supported CLIs with the right authentication context.
+
+### v1 Scope
+
+- Supported profile types: `mysql`, `mongo`, `redis`
+- Supported tools: `mysql`, `mongosh`, `redis-cli`
+- Profile metadata is stored in `~/.config/xrun/profiles.toml`
+- Secrets are stored in `~/.config/xrun/secrets.enc`
+- The encrypted secrets file uses a master key stored in the OS keyring
+
+Linux requires a working Secret Service-compatible keyring. There is no plaintext or passphrase fallback in v1.
+
+### Commands
 
 ```bash
-keeprun config set defaults.life 3d
-keeprun config set defaults.run_after_restart true
-keeprun --name job python job.py
+xrun add <profile> --type mysql|mongo|redis --host HOST [options]
+xrun list
+xrun rm <profile>
+xrun exec <profile> -- <tool> [args...]
+xrun test <profile> [--tool <tool>]
+```
+
+Common `xrun add` options:
+
+- `--type <mysql|mongo|redis>`
+- `--host <host>`
+- `--port <port>`
+- `--username <username>`
+- `--database <name>`
+- `--tls`
+- `--tls-ca-file <path>`
+- `--secret-stdin`
+- `--secret-env <ENV_NAME>`
+
+Mongo-only option:
+
+- `--auth-database <name>`
+
+MySQL-only option:
+
+- `--socket <path>`
+
+### Examples
+
+Add a MySQL profile and read the password from a terminal prompt:
+
+```bash
+xrun add user_db --type mysql --host 127.0.0.1 --port 3306 --username app --database users
+```
+
+Add a Redis profile from an environment variable:
+
+```bash
+export REDIS_PASSWORD='secret'
+xrun add cache --type redis --host 127.0.0.1 --port 6379 --username default --secret-env REDIS_PASSWORD
+```
+
+List saved profiles:
+
+```bash
+xrun list
+```
+
+Run a CLI with the stored profile:
+
+```bash
+xrun exec user_db -- mysql -e 'SELECT NOW()'
+xrun exec cache -- redis-cli PING
+xrun exec docs -- mongosh
+```
+
+Validate a stored profile:
+
+```bash
+xrun test user_db
+xrun test cache --tool redis-cli
 ```

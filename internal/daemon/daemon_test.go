@@ -2,17 +2,18 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/jingyugao/keep-run/internal/client"
-	"github.com/jingyugao/keep-run/internal/config"
-	"github.com/jingyugao/keep-run/internal/ipc"
-	"github.com/jingyugao/keep-run/internal/storage"
-	"github.com/jingyugao/keep-run/internal/task"
+	"github.com/jingyugao/devkit/internal/client"
+	"github.com/jingyugao/devkit/internal/config"
+	"github.com/jingyugao/devkit/internal/ipc"
+	"github.com/jingyugao/devkit/internal/storage"
+	"github.com/jingyugao/devkit/internal/task"
 )
 
 func TestCreateStopStartRemoveLifecycle(t *testing.T) {
@@ -21,11 +22,10 @@ func TestCreateStopStartRemoveLifecycle(t *testing.T) {
 	c := client.New()
 
 	record, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
-		Name:            "svc",
-		Argv:            []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
-		Cwd:             t.TempDir(),
-		Env:             testEnv(),
-		RunAfterRestart: false,
+		Name: "svc",
+		Argv: []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+		Cwd:  t.TempDir(),
+		Env:  testEnv(),
 	})
 	if err != nil {
 		t.Fatalf("CreateTask returned error: %v", err)
@@ -33,13 +33,15 @@ func TestCreateStopStartRemoveLifecycle(t *testing.T) {
 	if record.State.RuntimeState != task.StateRunning {
 		t.Fatalf("expected running state, got %s", record.State.RuntimeState)
 	}
+	if len(record.Spec.ID) != 6 {
+		t.Fatalf("expected 6-char task id, got %q", record.Spec.ID)
+	}
 
 	if _, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
-		Name:            "svc",
-		Argv:            []string{"/bin/sh", "-lc", "sleep 1"},
-		Cwd:             t.TempDir(),
-		Env:             testEnv(),
-		RunAfterRestart: false,
+		Name: "svc",
+		Argv: []string{"/bin/sh", "-lc", "sleep 1"},
+		Cwd:  t.TempDir(),
+		Env:  testEnv(),
 	}); err == nil {
 		t.Fatalf("expected duplicate name error")
 	}
@@ -59,6 +61,9 @@ func TestCreateStopStartRemoveLifecycle(t *testing.T) {
 	if started.State.RuntimeState != task.StateRunning {
 		t.Fatalf("expected running state after restart, got %s", started.State.RuntimeState)
 	}
+	if started.State.RestartCount < 1 {
+		t.Fatalf("expected restart count to increment after manual start, got %d", started.State.RestartCount)
+	}
 
 	if err := c.RemoveTask(context.Background(), record.Spec.ID, true); err != nil {
 		t.Fatalf("RemoveTask returned error: %v", err)
@@ -71,12 +76,11 @@ func TestExpiryAndLogs(t *testing.T) {
 	c := client.New()
 
 	record, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
-		Name:            "exp",
-		Argv:            []string{"/bin/sh", "-lc", "echo out; echo err 1>&2; sleep 5"},
-		Cwd:             t.TempDir(),
-		Env:             testEnv(),
-		Life:            "1s",
-		RunAfterRestart: false,
+		Name: "exp",
+		Argv: []string{"/bin/sh", "-lc", "echo out; echo err 1>&2; sleep 5"},
+		Cwd:  t.TempDir(),
+		Env:  testEnv(),
+		Life: "1s",
 	})
 	if err != nil {
 		t.Fatalf("CreateTask returned error: %v", err)
@@ -99,7 +103,38 @@ func TestExpiryAndLogs(t *testing.T) {
 	}
 }
 
-func TestRestartRehydratesEligibleTasks(t *testing.T) {
+func TestExitAutoRestartsTask(t *testing.T) {
+	cancel := startTestServer(t)
+	defer cancel()
+	c := client.New()
+
+	record, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
+		Name: "oneshot",
+		Argv: []string{"/bin/sh", "-lc", "echo once"},
+		Cwd:  t.TempDir(),
+		Env:  testEnv(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+
+	waitForRestartCountAtLeast(t, c, record.Spec.ID, 1, 4*time.Second)
+	updated, err := resolveTask(c, record.Spec.ID)
+	if err != nil {
+		t.Fatalf("resolveTask returned error: %v", err)
+	}
+	if updated.State.DesiredState != task.DesiredRunning {
+		t.Fatalf("expected desired state to remain running, got %s", updated.State.DesiredState)
+	}
+	if updated.State.RestartCount < 1 {
+		t.Fatalf("expected restart count to increment, got %d", updated.State.RestartCount)
+	}
+	if updated.State.RuntimeState == task.StateStopped || updated.State.RuntimeState == task.StateFailed || updated.State.RuntimeState == task.StateExpired {
+		t.Fatalf("expected task to stay restartable after exit, got %s", updated.State.RuntimeState)
+	}
+}
+
+func TestRestartRehydratesDesiredRunningTasks(t *testing.T) {
 	home := shortHome(t)
 	t.Setenv("HOME", home)
 
@@ -107,13 +142,12 @@ func TestRestartRehydratesEligibleTasks(t *testing.T) {
 	now := time.Now()
 	runnable := task.Record{
 		Spec: task.Spec{
-			ID:              "01TESTRUNNABLE",
-			Name:            "runnable",
-			Argv:            []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
-			Cwd:             t.TempDir(),
-			Env:             testEnv(),
-			RunAfterRestart: true,
-			CreatedAt:       now,
+			ID:        "run123",
+			Name:      "runnable",
+			Argv:      []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+			Cwd:       t.TempDir(),
+			Env:       testEnv(),
+			CreatedAt: now,
 		},
 		State: task.State{
 			DesiredState: task.DesiredRunning,
@@ -122,16 +156,15 @@ func TestRestartRehydratesEligibleTasks(t *testing.T) {
 	}
 	stopped := task.Record{
 		Spec: task.Spec{
-			ID:              "01TESTSTOPPED",
-			Name:            "stopped",
-			Argv:            []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
-			Cwd:             t.TempDir(),
-			Env:             testEnv(),
-			RunAfterRestart: false,
-			CreatedAt:       now,
+			ID:        "stop12",
+			Name:      "stopped",
+			Argv:      []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+			Cwd:       t.TempDir(),
+			Env:       testEnv(),
+			CreatedAt: now,
 		},
 		State: task.State{
-			DesiredState: task.DesiredRunning,
+			DesiredState: task.DesiredStopped,
 			RuntimeState: task.StateStopped,
 		},
 	}
@@ -153,22 +186,56 @@ func TestRestartRehydratesEligibleTasks(t *testing.T) {
 		_ = server.Run(ctx)
 	}()
 	waitForPing(t, client.New(), 3*time.Second)
-	defer cancel()
 
 	waitForState(t, client.New(), runnable.Spec.ID, task.StateRunning, 3*time.Second)
-	records, err := client.New().ListTasks(context.Background(), false)
+	updatedStopped, err := resolveTask(client.New(), stopped.Spec.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stoppedState := task.RuntimeState("")
-	for _, record := range records {
-		if record.Spec.ID == stopped.Spec.ID {
-			stoppedState = record.State.RuntimeState
-		}
+	if updatedStopped.State.RuntimeState != task.StateStopped {
+		t.Fatalf("expected desired-stopped task to remain stopped, got %s", updatedStopped.State.RuntimeState)
 	}
-	if stoppedState != task.StateStopped {
-		t.Fatalf("expected non-restart task to remain stopped, got %s", stoppedState)
+}
+
+func TestStartAllStartsStoppedTasks(t *testing.T) {
+	cancel := startTestServer(t)
+	defer cancel()
+	c := client.New()
+
+	first, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
+		Name: "first",
+		Argv: []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+		Cwd:  t.TempDir(),
+		Env:  testEnv(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(first) returned error: %v", err)
 	}
+	second, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
+		Name: "second",
+		Argv: []string{"/bin/sh", "-lc", "trap 'exit 0' TERM; while true; do sleep 1; done"},
+		Cwd:  t.TempDir(),
+		Env:  testEnv(),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(second) returned error: %v", err)
+	}
+	if _, err := c.StopTask(context.Background(), first.Spec.ID); err != nil {
+		t.Fatalf("StopTask(first) returned error: %v", err)
+	}
+	if _, err := c.StopTask(context.Background(), second.Spec.ID); err != nil {
+		t.Fatalf("StopTask(second) returned error: %v", err)
+	}
+
+	started, err := c.StartAll(context.Background())
+	if err != nil {
+		t.Fatalf("StartAll returned error: %v", err)
+	}
+	if len(started) != 2 {
+		t.Fatalf("expected 2 tasks from StartAll, got %d", len(started))
+	}
+	waitForState(t, c, first.Spec.ID, task.StateRunning, 3*time.Second)
+	waitForState(t, c, second.Spec.ID, task.StateRunning, 3*time.Second)
 }
 
 func startTestServer(t *testing.T) context.CancelFunc {
@@ -203,19 +270,39 @@ func waitForState(t *testing.T, c *client.Client, ref string, want task.RuntimeS
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		records, err := c.ListTasks(context.Background(), false)
-		if err == nil {
-			for _, record := range records {
-				if record.Spec.ID == ref || record.Spec.Name == ref {
-					if record.State.RuntimeState == want {
-						return
-					}
-				}
-			}
+		record, err := resolveTask(c, ref)
+		if err == nil && record.State.RuntimeState == want {
+			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("task %s did not reach state %s within %s", ref, want, timeout)
+}
+
+func waitForRestartCountAtLeast(t *testing.T, c *client.Client, ref string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		record, err := resolveTask(c, ref)
+		if err == nil && record.State.RestartCount >= want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("task %s did not reach restart count %d within %s", ref, want, timeout)
+}
+
+func resolveTask(c *client.Client, ref string) (task.Record, error) {
+	records, err := c.ListTasks(context.Background(), false)
+	if err != nil {
+		return task.Record{}, err
+	}
+	for _, record := range records {
+		if record.Spec.ID == ref || record.Spec.Name == ref {
+			return record, nil
+		}
+	}
+	return task.Record{}, errors.New("task not found")
 }
 
 func testEnv() map[string]string {

@@ -3,6 +3,8 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,14 +20,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/oklog/ulid/v2"
-
-	"github.com/jingyugao/keep-run/internal/config"
-	"github.com/jingyugao/keep-run/internal/durationutil"
-	"github.com/jingyugao/keep-run/internal/ipc"
-	"github.com/jingyugao/keep-run/internal/paths"
-	"github.com/jingyugao/keep-run/internal/storage"
-	"github.com/jingyugao/keep-run/internal/task"
+	"github.com/jingyugao/devkit/internal/config"
+	"github.com/jingyugao/devkit/internal/durationutil"
+	"github.com/jingyugao/devkit/internal/ipc"
+	"github.com/jingyugao/devkit/internal/paths"
+	"github.com/jingyugao/devkit/internal/storage"
+	"github.com/jingyugao/devkit/internal/task"
 )
 
 type Server struct {
@@ -51,6 +51,12 @@ type lineLogWriter struct {
 	mu   sync.Mutex
 	file *os.File
 }
+
+const (
+	taskIDLength   = 6
+	taskIDAlphabet = "0123456789abcdefghijklmnopqrstuv"
+	restartDelay   = 1 * time.Second
+)
 
 func New(cfg config.Config) (*Server, error) {
 	if err := paths.EnsureBaseDirs(); err != nil {
@@ -82,6 +88,7 @@ func New(cfg config.Config) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/status", s.handleStatus)
+	mux.HandleFunc("/tasks/start-all", s.handleStartAll)
 	mux.HandleFunc("/tasks", s.handleTasks)
 	mux.HandleFunc("/tasks/", s.handleTask)
 	s.httpServer = &http.Server{Handler: mux}
@@ -213,6 +220,19 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, ipc.StartStopResponse{Task: record})
 }
 
+func (s *Server) handleStartAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	records, err := s.startAll()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ipc.StartAllResponse{Tasks: records})
+}
+
 func (s *Server) handleStartTask(w http.ResponseWriter, r *http.Request, ref string) {
 	record, err := s.startByRef(ref)
 	if err != nil {
@@ -301,15 +321,14 @@ func (s *Server) createTask(req ipc.CreateTaskRequest) (task.Record, error) {
 
 	record := task.Record{
 		Spec: task.Spec{
-			ID:              newTaskID(),
-			Name:            req.Name,
-			Argv:            append([]string(nil), req.Argv...),
-			Cwd:             req.Cwd,
-			Env:             cloneEnv(req.Env),
-			Life:            req.Life,
-			ExpiresAt:       expiresAt,
-			RunAfterRestart: req.RunAfterRestart,
-			CreatedAt:       createdAt,
+			ID:        "",
+			Name:      req.Name,
+			Argv:      append([]string(nil), req.Argv...),
+			Cwd:       req.Cwd,
+			Env:       cloneEnv(req.Env),
+			Life:      req.Life,
+			ExpiresAt: expiresAt,
+			CreatedAt: createdAt,
 		},
 		State: task.State{
 			DesiredState: task.DesiredRunning,
@@ -317,10 +336,15 @@ func (s *Server) createTask(req ipc.CreateTaskRequest) (task.Record, error) {
 			Reason:       "registered",
 		},
 	}
+	taskID, err := s.newTaskID()
+	if err != nil {
+		return task.Record{}, err
+	}
+	record.Spec.ID = taskID
 	if err := s.store.Save(record); err != nil {
 		return task.Record{}, err
 	}
-	return s.startRecord(record)
+	return s.ensureTaskRunning(record)
 }
 
 func (s *Server) startByRef(ref string) (task.Record, error) {
@@ -333,10 +357,32 @@ func (s *Server) startByRef(ref string) (task.Record, error) {
 			return task.Record{}, err
 		}
 	}
-	return s.startRecord(record)
+	return s.ensureTaskRunning(record)
 }
 
-func (s *Server) startRecord(record task.Record) (task.Record, error) {
+func (s *Server) startAll() ([]task.Record, error) {
+	records, err := s.store.List()
+	if err != nil {
+		return nil, err
+	}
+	results := make([]task.Record, 0, len(records))
+	for _, record := range records {
+		if record.IsExpired(time.Now()) {
+			continue
+		}
+		started, err := s.ensureTaskRunning(record)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, started)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Spec.ID < results[j].Spec.ID
+	})
+	return results, nil
+}
+
+func (s *Server) ensureTaskRunning(record task.Record) (task.Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -354,7 +400,11 @@ func (s *Server) startRecord(record task.Record) (task.Record, error) {
 		return record, fmt.Errorf("task %s is expired", record.Spec.ID)
 	}
 	if existing := s.runners[record.Spec.ID]; existing != nil {
-		return record, fmt.Errorf("task %s is already running", record.Spec.ID)
+		record.State.DesiredState = task.DesiredRunning
+		if err := s.store.Save(record); err != nil {
+			return task.Record{}, err
+		}
+		return record, nil
 	}
 
 	logFile, err := os.OpenFile(paths.LogFile(record.Spec.ID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -382,6 +432,9 @@ func (s *Server) startRecord(record task.Record) (task.Record, error) {
 	}
 
 	now = time.Now()
+	if record.State.StartedAt != nil {
+		record.State.RestartCount++
+	}
 	record.State.DesiredState = task.DesiredRunning
 	record.State.RuntimeState = task.StateRunning
 	record.State.PID = cmd.Process.Pid
@@ -490,12 +543,14 @@ func (s *Server) waitOnProcess(taskID string, r *runner) {
 	now := time.Now()
 	record.State.PID = 0
 	record.State.StoppedAt = &now
-	record.State.DesiredState = task.DesiredStopped
+	restart := false
 	if record.IsExpired(now) {
+		record.State.DesiredState = task.DesiredStopped
 		record.State.RuntimeState = task.StateExpired
 		record.State.Reason = "task life expired"
 		record.State.ExitCode = nil
 	} else if r.manualStop {
+		record.State.DesiredState = task.DesiredStopped
 		record.State.RuntimeState = task.StateStopped
 		record.State.Reason = r.reason
 		record.State.ExitCode = nil
@@ -509,12 +564,16 @@ func (s *Server) waitOnProcess(taskID string, r *runner) {
 			record.State.RuntimeState = task.StateFailed
 			record.State.Reason = fmt.Sprintf("process exited with code %d", exitCode)
 		}
+		restart = record.State.DesiredState == task.DesiredRunning
 	}
 	_ = s.store.Save(record)
 
 	s.mu.Lock()
 	delete(s.runners, taskID)
 	s.mu.Unlock()
+	if restart {
+		go s.restartTaskAfterExit(taskID)
+	}
 }
 
 func (s *Server) reconcileStartup() error {
@@ -550,10 +609,10 @@ func (s *Server) reconcileStartup() error {
 	}
 
 	for _, record := range records {
-		if record.State.DesiredState != task.DesiredRunning || !record.Spec.RunAfterRestart || record.IsExpired(now) {
+		if record.State.DesiredState != task.DesiredRunning || record.IsExpired(now) {
 			continue
 		}
-		if _, err := s.startRecord(record); err != nil {
+		if _, err := s.ensureTaskRunning(record); err != nil {
 			continue
 		}
 	}
@@ -595,6 +654,29 @@ func (s *Server) enforceExpiry() {
 	}
 }
 
+func (s *Server) restartTaskAfterExit(taskID string) {
+	time.Sleep(restartDelay)
+	record, err := s.store.Load(taskID)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	if record.State.DesiredState != task.DesiredRunning || record.IsExpired(now) {
+		return
+	}
+	if _, err := s.ensureTaskRunning(record); err != nil {
+		record, loadErr := s.store.Load(taskID)
+		if loadErr != nil {
+			return
+		}
+		record.State.RuntimeState = task.StateFailed
+		record.State.Reason = fmt.Sprintf("restart failed: %v", err)
+		record.State.PID = 0
+		record.State.StoppedAt = ptrTime(time.Now())
+		_ = s.store.Save(record)
+	}
+}
+
 func (s *Server) ensureUniqueName(name string, excludeID string) error {
 	records, err := s.store.List()
 	if err != nil {
@@ -621,8 +703,39 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, ipc.ErrorResponse{Error: message})
 }
 
-func newTaskID() string {
-	return ulid.Make().String()
+func (s *Server) newTaskID() (string, error) {
+	records, err := s.store.List()
+	if err != nil {
+		return "", err
+	}
+	used := make(map[string]struct{}, len(records))
+	for _, record := range records {
+		used[record.Spec.ID] = struct{}{}
+	}
+	for range 64 {
+		id, err := randomTaskID()
+		if err != nil {
+			return "", err
+		}
+		if _, exists := used[id]; !exists {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("failed to allocate unique task id")
+}
+
+func randomTaskID() (string, error) {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	n := binary.BigEndian.Uint32(buf[:]) & ((1 << 30) - 1)
+	out := make([]byte, taskIDLength)
+	for i := taskIDLength - 1; i >= 0; i-- {
+		out[i] = taskIDAlphabet[n&31]
+		n >>= 5
+	}
+	return string(out), nil
 }
 
 func cloneEnv(in map[string]string) map[string]string {

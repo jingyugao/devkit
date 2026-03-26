@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jingyugao/keep-run/internal/ipc"
-	"github.com/jingyugao/keep-run/internal/paths"
-	"github.com/jingyugao/keep-run/internal/task"
+	"github.com/jingyugao/devkit/internal/ipc"
+	"github.com/jingyugao/devkit/internal/paths"
+	"github.com/jingyugao/devkit/internal/task"
 )
 
 type Client struct {
@@ -93,6 +93,23 @@ func (c *Client) ListTasks(ctx context.Context, runningOnly bool) ([]task.Record
 
 func (c *Client) StartTask(ctx context.Context, ref string) (task.Record, error) {
 	return doJSON[struct{}, ipc.StartStopResponse](ctx, c.httpClient, c.baseURL+"/tasks/"+url.PathEscape(ref)+"/start", http.MethodPost, struct{}{})
+}
+
+func (c *Client) StartAll(ctx context.Context) ([]task.Record, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tasks/start-all", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out ipc.StartAllResponse
+	if err := decodeMaybeError(resp, &out); err != nil {
+		return nil, err
+	}
+	return out.Tasks, nil
 }
 
 func (c *Client) StopTask(ctx context.Context, ref string) (task.Record, error) {

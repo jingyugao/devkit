@@ -21,15 +21,14 @@ const (
 )
 
 type Spec struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name,omitempty"`
-	Argv            []string          `json:"argv"`
-	Cwd             string            `json:"cwd"`
-	Env             map[string]string `json:"env,omitempty"`
-	Life            string            `json:"life,omitempty"`
-	ExpiresAt       *time.Time        `json:"expires_at,omitempty"`
-	RunAfterRestart bool              `json:"run_after_restart"`
-	CreatedAt       time.Time         `json:"created_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name,omitempty"`
+	Argv      []string          `json:"argv"`
+	Cwd       string            `json:"cwd"`
+	Env       map[string]string `json:"env,omitempty"`
+	Life      string            `json:"life,omitempty"`
+	ExpiresAt *time.Time        `json:"expires_at,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
 }
 
 type State struct {
@@ -39,6 +38,7 @@ type State struct {
 	StartedAt    *time.Time   `json:"started_at,omitempty"`
 	StoppedAt    *time.Time   `json:"stopped_at,omitempty"`
 	ExitCode     *int         `json:"exit_code,omitempty"`
+	RestartCount int          `json:"restart_count,omitempty"`
 	Reason       string       `json:"reason,omitempty"`
 }
 
@@ -55,5 +55,9 @@ func (r Record) Identifier() string {
 	if r.Spec.Name != "" {
 		return r.Spec.Name
 	}
+	return r.Spec.ID
+}
+
+func (r Record) DisplayID() string {
 	return r.Spec.ID
 }
