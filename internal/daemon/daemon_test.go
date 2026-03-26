@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -236,6 +237,48 @@ func TestStartAllStartsStoppedTasks(t *testing.T) {
 	}
 	waitForState(t, c, first.Spec.ID, task.StateRunning, 3*time.Second)
 	waitForState(t, c, second.Spec.ID, task.StateRunning, 3*time.Second)
+}
+
+func TestCreateTaskResolvesExecutableFromTaskEnvPath(t *testing.T) {
+	cancel := startTestServer(t)
+	defer cancel()
+	c := client.New()
+
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "fakecmd")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+	record, err := c.CreateTask(context.Background(), ipc.CreateTaskRequest{
+		Name: "pathcmd",
+		Argv: []string{"fakecmd"},
+		Cwd:  t.TempDir(),
+		Env: map[string]string{
+			"PATH":  binDir,
+			"HOME":  os.Getenv("HOME"),
+			"SHELL": "/bin/sh",
+			"USER":  os.Getenv("USER"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+
+	waitForRestartCountAtLeast(t, c, record.Spec.ID, 1, 4*time.Second)
+	reader, err := c.Logs(context.Background(), record.Spec.ID, false, 20)
+	if err != nil {
+		t.Fatalf("Logs returned error: %v", err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("reading logs failed: %v", err)
+	}
+	if !strings.Contains(string(data), "stdout ok") {
+		t.Fatalf("expected task output in logs, got %q", string(data))
+	}
 }
 
 func startTestServer(t *testing.T) context.CancelFunc {
