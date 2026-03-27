@@ -42,6 +42,27 @@ func TestMySQLPrepareExecWritesOptionFile(t *testing.T) {
 	}
 }
 
+func TestMySQLPrepareExecSupportsLoginPath(t *testing.T) {
+	registry := NewRegistry()
+	p := profile.Profile{
+		Name:           "doris",
+		Type:           profile.TypeMySQL,
+		MySQLLoginPath: "doris",
+		Database:       "analytics",
+	}
+
+	prepared, err := registry.PrepareExec(p, store.Secret{}, "mysql", []string{"-e", "SELECT 2"})
+	if err != nil {
+		t.Fatalf("PrepareExec returned error: %v", err)
+	}
+	if prepared.Cleanup != nil {
+		t.Fatalf("expected login-path mysql exec to avoid temp files")
+	}
+	if len(prepared.Args) < 2 || prepared.Args[0] != "--login-path=doris" || prepared.Args[1] != "--database=analytics" {
+		t.Fatalf("unexpected mysql login-path args: %#v", prepared.Args)
+	}
+}
+
 func TestRedisPrepareExecSetsEnvAndArgs(t *testing.T) {
 	registry := NewRegistry()
 	p := profile.Profile{Name: "cache", Type: profile.TypeRedis, Host: "redis", Port: 6379, Username: "default", Database: "2", TLS: true, TLSCAFile: "/tmp/ca.pem"}
@@ -131,6 +152,41 @@ func TestSSHPrepareExecWritesIdentityAndKnownHostsFiles(t *testing.T) {
 	}
 }
 
+func TestSSHPrepareExecPlacesUserOptionsBeforeDestination(t *testing.T) {
+	registry := NewRegistry()
+	p := profile.Profile{
+		Name:     "shell",
+		Type:     profile.TypeSSH,
+		Host:     "ssh.example",
+		Port:     22,
+		Username: "ops",
+	}
+
+	prepared, err := registry.PrepareExec(p, store.Secret{
+		PrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
+	}, "ssh", []string{"ops@ssh.example", "-v", "-oPort=2222", "uptime"})
+	if err != nil {
+		t.Fatalf("PrepareExec returned error: %v", err)
+	}
+	defer prepared.Cleanup()
+
+	destination := "ops@ssh.example"
+	if countOccurrences(prepared.Args, destination) != 1 {
+		t.Fatalf("expected exactly one destination arg, got %#v", prepared.Args)
+	}
+
+	destIndex := indexOf(prepared.Args, destination)
+	verboseIndex := indexOf(prepared.Args, "-v")
+	portIndex := indexOf(prepared.Args, "-oPort=2222")
+	remoteIndex := indexOf(prepared.Args, "uptime")
+	if verboseIndex == -1 || portIndex == -1 || destIndex == -1 || remoteIndex == -1 {
+		t.Fatalf("expected ssh args to contain user options, destination, and remote command, got %#v", prepared.Args)
+	}
+	if !(verboseIndex < destIndex && portIndex < destIndex && remoteIndex > destIndex) {
+		t.Fatalf("expected ssh options before destination and remote command after it, got %#v", prepared.Args)
+	}
+}
+
 func TestKubePrepareExecWritesTempKubeconfig(t *testing.T) {
 	registry := NewRegistry()
 	p := profile.Profile{
@@ -191,6 +247,90 @@ func TestKubePrepareExecSupportsClientCertificateAuth(t *testing.T) {
 	}
 }
 
+func TestKubePrepareExecSupportsExecAuth(t *testing.T) {
+	registry := NewRegistry()
+	p := profile.Profile{
+		Name:                "cluster",
+		Type:                profile.TypeKube,
+		Server:              "https://k8s.example:6443",
+		Cluster:             "dev-cluster",
+		Context:             "dev-context",
+		ExecAPIVersion:      "client.authentication.k8s.io/v1",
+		ExecCommand:         "aws",
+		ExecArgs:            []string{"eks", "get-token"},
+		ExecEnv:             map[string]string{"AWS_PROFILE": "sandbox"},
+		ExecInteractiveMode: "Never",
+	}
+
+	prepared, err := registry.PrepareExec(p, store.Secret{}, "kubectl", []string{"get", "ns"})
+	if err != nil {
+		t.Fatalf("PrepareExec returned error: %v", err)
+	}
+	defer prepared.Cleanup()
+
+	path := strings.TrimPrefix(prepared.Env[0], "KUBECONFIG=")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "exec:") || !strings.Contains(content, "command: 'aws'") || !strings.Contains(content, "name: 'AWS_PROFILE'") {
+		t.Fatalf("expected exec auth in kubeconfig: %s", content)
+	}
+}
+
+func TestPrepareKubeAggregateExecWritesCombinedKubeconfig(t *testing.T) {
+	registry := NewRegistry()
+	profiles := []profile.Profile{
+		{
+			Name:      "bigdata",
+			Type:      profile.TypeKube,
+			Server:    "https://47.104.71.163:6443",
+			Namespace: "bigdata",
+			Cluster:   "bigdata",
+			Context:   "bigdata",
+		},
+		{
+			Name:      "common",
+			Type:      profile.TypeKube,
+			Server:    "https://47.104.218.114:6443",
+			Namespace: "common",
+			Cluster:   "common",
+			Context:   "common",
+		},
+	}
+	secrets := []store.Secret{
+		{Token: "tok-bigdata"},
+		{Token: "tok-common"},
+	}
+
+	prepared, err := registry.PrepareKubeAggregateExec(profiles, secrets, "k9s", []string{})
+	if err != nil {
+		t.Fatalf("PrepareKubeAggregateExec returned error: %v", err)
+	}
+	defer prepared.Cleanup()
+
+	if prepared.Path != "k9s" {
+		t.Fatalf("unexpected aggregate path: %q", prepared.Path)
+	}
+	if len(prepared.Env) != 1 || !strings.HasPrefix(prepared.Env[0], "KUBECONFIG=") {
+		t.Fatalf("expected aggregate KUBECONFIG env, got %#v", prepared.Env)
+	}
+
+	path := strings.TrimPrefix(prepared.Env[0], "KUBECONFIG=")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "server: 'https://47.104.71.163:6443'") || !strings.Contains(content, "server: 'https://47.104.218.114:6443'") {
+		t.Fatalf("expected both cluster servers in merged kubeconfig: %s", content)
+	}
+	if !strings.Contains(content, "current-context: 'bigdata'") {
+		t.Fatalf("expected first imported context as current context: %s", content)
+	}
+}
+
 func contains(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {
@@ -207,4 +347,14 @@ func indexOf(items []string, want string) int {
 		}
 	}
 	return -1
+}
+
+func countOccurrences(items []string, want string) int {
+	count := 0
+	for _, item := range items {
+		if item == want {
+			count++
+		}
+	}
+	return count
 }

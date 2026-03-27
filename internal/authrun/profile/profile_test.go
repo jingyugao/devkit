@@ -110,6 +110,40 @@ func TestSSHAndKubeDefaults(t *testing.T) {
 	}
 }
 
+func TestKubeExecProfileValidatesAndRoundTrips(t *testing.T) {
+	path := DefaultProfilesPath(t)
+	store := NewStore(path)
+
+	input := Profile{
+		Name:                "cluster",
+		Type:                TypeKube,
+		Server:              "https://k8s.example:6443",
+		ExecAPIVersion:      "client.authentication.k8s.io/v1",
+		ExecCommand:         "aws",
+		ExecArgs:            []string{"eks", "get-token"},
+		ExecEnv:             map[string]string{"AWS_PROFILE": "sandbox"},
+		ExecInteractiveMode: "Never",
+	}
+	if err := store.Add(input); err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+
+	got, err := store.Get("cluster")
+	if err != nil {
+		t.Fatalf("Get returned error: %v", err)
+	}
+	if got.ExecCommand != "aws" || len(got.ExecArgs) != 2 || got.ExecEnv["AWS_PROFILE"] != "sandbox" || got.ExecInteractiveMode != "Never" {
+		t.Fatalf("unexpected kube exec round-trip profile: %#v", got)
+	}
+}
+
+func TestMySQLLoginPathProfileValidates(t *testing.T) {
+	p := Profile{Name: "doris", Type: TypeMySQL, MySQLLoginPath: "doris"}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("expected mysql login-path profile to validate, got %v", err)
+	}
+}
+
 func DefaultProfilesPath(t *testing.T) string {
 	t.Helper()
 	return t.TempDir() + "/profiles.toml"

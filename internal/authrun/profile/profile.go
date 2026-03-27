@@ -31,25 +31,31 @@ const (
 )
 
 type Profile struct {
-	Name                  string `toml:"-"`
-	Type                  Type   `toml:"type"`
-	Host                  string `toml:"host,omitempty"`
-	Port                  int    `toml:"port,omitempty"`
-	Username              string `toml:"username,omitempty"`
-	Database              string `toml:"database,omitempty"`
-	AuthDatabase          string `toml:"auth_database,omitempty"`
-	Namespace             string `toml:"namespace,omitempty"`
-	Cluster               string `toml:"cluster,omitempty"`
-	Context               string `toml:"context,omitempty"`
-	Server                string `toml:"server,omitempty"`
-	TLS                   bool   `toml:"tls,omitempty"`
-	TLSCAFile             string `toml:"tls_ca_file,omitempty"`
-	CertificateAuthority  string `toml:"certificate_authority,omitempty"`
-	ClientCertificate     string `toml:"client_certificate,omitempty"`
-	InsecureSkipTLSVerify bool   `toml:"insecure_skip_tls_verify,omitempty"`
-	Socket                string `toml:"socket,omitempty"`
-	PublicKey             string `toml:"public_key,omitempty"`
-	KnownHosts            string `toml:"known_hosts,omitempty"`
+	Name                  string            `toml:"-"`
+	Type                  Type              `toml:"type"`
+	Host                  string            `toml:"host,omitempty"`
+	Port                  int               `toml:"port,omitempty"`
+	Username              string            `toml:"username,omitempty"`
+	Database              string            `toml:"database,omitempty"`
+	AuthDatabase          string            `toml:"auth_database,omitempty"`
+	MySQLLoginPath        string            `toml:"mysql_login_path,omitempty"`
+	Namespace             string            `toml:"namespace,omitempty"`
+	Cluster               string            `toml:"cluster,omitempty"`
+	Context               string            `toml:"context,omitempty"`
+	Server                string            `toml:"server,omitempty"`
+	TLS                   bool              `toml:"tls,omitempty"`
+	TLSCAFile             string            `toml:"tls_ca_file,omitempty"`
+	CertificateAuthority  string            `toml:"certificate_authority,omitempty"`
+	ClientCertificate     string            `toml:"client_certificate,omitempty"`
+	ExecAPIVersion        string            `toml:"exec_api_version,omitempty"`
+	ExecCommand           string            `toml:"exec_command,omitempty"`
+	ExecInteractiveMode   string            `toml:"exec_interactive_mode,omitempty"`
+	ExecArgs              []string          `toml:"exec_args,omitempty"`
+	ExecEnv               map[string]string `toml:"exec_env,omitempty"`
+	InsecureSkipTLSVerify bool              `toml:"insecure_skip_tls_verify,omitempty"`
+	Socket                string            `toml:"socket,omitempty"`
+	PublicKey             string            `toml:"public_key,omitempty"`
+	KnownHosts            string            `toml:"known_hosts,omitempty"`
 }
 
 type file struct {
@@ -90,6 +96,7 @@ func (p Profile) Normalized() Profile {
 	p.Username = strings.TrimSpace(p.Username)
 	p.Database = strings.TrimSpace(p.Database)
 	p.AuthDatabase = strings.TrimSpace(p.AuthDatabase)
+	p.MySQLLoginPath = strings.TrimSpace(p.MySQLLoginPath)
 	p.Namespace = strings.TrimSpace(p.Namespace)
 	p.Cluster = strings.TrimSpace(p.Cluster)
 	p.Context = strings.TrimSpace(p.Context)
@@ -97,6 +104,30 @@ func (p Profile) Normalized() Profile {
 	p.TLSCAFile = strings.TrimSpace(p.TLSCAFile)
 	p.CertificateAuthority = strings.TrimSpace(p.CertificateAuthority)
 	p.ClientCertificate = strings.TrimSpace(p.ClientCertificate)
+	p.ExecAPIVersion = strings.TrimSpace(p.ExecAPIVersion)
+	p.ExecCommand = strings.TrimSpace(p.ExecCommand)
+	p.ExecInteractiveMode = strings.TrimSpace(p.ExecInteractiveMode)
+	if len(p.ExecArgs) > 0 {
+		args := make([]string, 0, len(p.ExecArgs))
+		for _, arg := range p.ExecArgs {
+			arg = strings.TrimSpace(arg)
+			if arg != "" {
+				args = append(args, arg)
+			}
+		}
+		p.ExecArgs = args
+	}
+	if len(p.ExecEnv) > 0 {
+		env := make(map[string]string, len(p.ExecEnv))
+		for key, value := range p.ExecEnv {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			env[key] = strings.TrimSpace(value)
+		}
+		p.ExecEnv = env
+	}
 	p.Socket = strings.TrimSpace(p.Socket)
 	p.PublicKey = strings.TrimSpace(p.PublicKey)
 	p.KnownHosts = strings.TrimSpace(p.KnownHosts)
@@ -135,11 +166,11 @@ func (p Profile) Validate() error {
 
 	switch p.Type {
 	case TypeMySQL:
-		if p.Host == "" && p.Socket == "" {
-			return fmt.Errorf("mysql profile requires --host or --socket")
+		if p.Host == "" && p.Socket == "" && p.MySQLLoginPath == "" {
+			return fmt.Errorf("mysql profile requires --host, --socket, or mysql_login_path")
 		}
-		if p.Username == "" {
-			return fmt.Errorf("mysql profile requires --username")
+		if p.Username == "" && p.MySQLLoginPath == "" {
+			return fmt.Errorf("mysql profile requires --username unless mysql_login_path is set")
 		}
 		if p.AuthDatabase != "" {
 			return fmt.Errorf("mysql profile does not support auth_database")
@@ -151,6 +182,9 @@ func (p Profile) Validate() error {
 		if p.Username == "" {
 			return fmt.Errorf("mongo profile requires --username")
 		}
+		if p.MySQLLoginPath != "" {
+			return fmt.Errorf("mongo profile does not support mysql login paths")
+		}
 		if p.Socket != "" {
 			return fmt.Errorf("mongo profile does not support socket")
 		}
@@ -160,6 +194,9 @@ func (p Profile) Validate() error {
 		}
 		if p.AuthDatabase != "" {
 			return fmt.Errorf("redis profile does not support auth_database")
+		}
+		if p.MySQLLoginPath != "" {
+			return fmt.Errorf("redis profile does not support mysql login paths")
 		}
 		if p.Socket != "" {
 			return fmt.Errorf("redis profile does not support socket")
@@ -171,10 +208,10 @@ func (p Profile) Validate() error {
 		if p.Username == "" {
 			return fmt.Errorf("ssh profile requires --username")
 		}
-		if p.Database != "" || p.AuthDatabase != "" || p.Namespace != "" || p.Server != "" || p.Cluster != "" || p.Context != "" {
+		if p.Database != "" || p.AuthDatabase != "" || p.MySQLLoginPath != "" || p.Namespace != "" || p.Server != "" || p.Cluster != "" || p.Context != "" {
 			return fmt.Errorf("ssh profile contains unsupported database or kube fields")
 		}
-		if p.CertificateAuthority != "" || p.ClientCertificate != "" {
+		if p.CertificateAuthority != "" || p.ClientCertificate != "" || p.ExecCommand != "" || p.ExecAPIVersion != "" || p.ExecInteractiveMode != "" || len(p.ExecArgs) != 0 || len(p.ExecEnv) != 0 {
 			return fmt.Errorf("ssh profile does not support kube certificate fields")
 		}
 		if p.Socket != "" {
@@ -184,7 +221,7 @@ func (p Profile) Validate() error {
 		if p.Server == "" {
 			return fmt.Errorf("kube profile requires --server")
 		}
-		if p.Host != "" || p.Port != 0 || p.Username != "" || p.Database != "" || p.AuthDatabase != "" || p.Socket != "" {
+		if p.Host != "" || p.Port != 0 || p.Username != "" || p.Database != "" || p.AuthDatabase != "" || p.MySQLLoginPath != "" || p.Socket != "" {
 			return fmt.Errorf("kube profile contains unsupported host or database fields")
 		}
 		if p.PublicKey != "" || p.KnownHosts != "" {
@@ -192,6 +229,9 @@ func (p Profile) Validate() error {
 		}
 		if p.InsecureSkipTLSVerify && p.CertificateAuthority != "" {
 			return fmt.Errorf("kube profile cannot use certificate authority data with --insecure-skip-tls-verify")
+		}
+		if p.ExecCommand == "" && (p.ExecAPIVersion != "" || p.ExecInteractiveMode != "" || len(p.ExecArgs) != 0 || len(p.ExecEnv) != 0) {
+			return fmt.Errorf("kube profile exec settings require exec_command")
 		}
 	default:
 		return fmt.Errorf("unsupported profile type %q", p.Type)
