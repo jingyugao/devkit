@@ -6,7 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jingyugao/devkit/internal/xrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/store"
 )
 
 var ErrUnsupportedTool = errors.New("unsupported tool")
@@ -22,8 +23,8 @@ type Adapter interface {
 	ProfileType() profile.Type
 	Tools() []string
 	DefaultTool() string
-	PrepareExec(p profile.Profile, password, binary string, userArgs []string) (Prepared, error)
-	PrepareTest(p profile.Profile, password, binary string) (Prepared, error)
+	PrepareExec(p profile.Profile, secret store.Secret, binary string, userArgs []string) (Prepared, error)
+	PrepareTest(p profile.Profile, secret store.Secret, binary string) (Prepared, error)
 }
 
 type Registry struct {
@@ -40,6 +41,8 @@ func NewRegistry() *Registry {
 		mysqlAdapter{},
 		mongoAdapter{},
 		redisAdapter{},
+		sshAdapter{},
+		kubeAdapter{},
 	} {
 		registry.register(adapter)
 	}
@@ -53,15 +56,15 @@ func (r *Registry) register(adapter Adapter) {
 	}
 }
 
-func (r *Registry) PrepareExec(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {
+func (r *Registry) PrepareExec(p profile.Profile, secret store.Secret, binary string, userArgs []string) (Prepared, error) {
 	adapter, err := r.adapterForBinary(p, binary)
 	if err != nil {
 		return Prepared{}, err
 	}
-	return adapter.PrepareExec(p, password, binary, userArgs)
+	return adapter.PrepareExec(p, secret, binary, userArgs)
 }
 
-func (r *Registry) PrepareTest(p profile.Profile, password, binary string) (Prepared, error) {
+func (r *Registry) PrepareTest(p profile.Profile, secret store.Secret, binary string) (Prepared, error) {
 	var adapter Adapter
 	var err error
 	if binary == "" {
@@ -76,7 +79,7 @@ func (r *Registry) PrepareTest(p profile.Profile, password, binary string) (Prep
 			return Prepared{}, err
 		}
 	}
-	return adapter.PrepareTest(p, password, binary)
+	return adapter.PrepareTest(p, secret, binary)
 }
 
 func (r *Registry) DefaultTool(t profile.Type) (string, error) {
@@ -127,4 +130,19 @@ func writeTempFile(pattern, contents string) (string, func() error, error) {
 		return "", nil, err
 	}
 	return file.Name(), func() error { return os.Remove(file.Name()) }, nil
+}
+
+func combineCleanups(cleanups ...func() error) func() error {
+	return func() error {
+		var firstErr error
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			if cleanups[i] == nil {
+				continue
+			}
+			if err := cleanups[i](); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
 }

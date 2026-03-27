@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	xkeyring "github.com/jingyugao/devkit/internal/xrun/keyring"
+	xkeyring "github.com/jingyugao/devkit/internal/authrun/keyring"
 )
 
 type fakeKeys struct {
@@ -39,14 +39,20 @@ func TestPutGetDeleteSecretRoundTrip(t *testing.T) {
 	store := NewStore(path, keys)
 	store.random = bytesOf(0x01, 12)
 
-	if err := store.Put(context.Background(), "prod", Secret{Password: "s3cr3t"}); err != nil {
+	if err := store.Put(context.Background(), "prod", Secret{
+		Password:   "s3cr3t",
+		PrivateKey: "PRIVATE KEY",
+		Passphrase: "phrase",
+		Token:      "token",
+		ClientKey:  "CLIENT KEY",
+	}); err != nil {
 		t.Fatalf("Put returned error: %v", err)
 	}
 	got, err := store.Get(context.Background(), "prod")
 	if err != nil {
 		t.Fatalf("Get returned error: %v", err)
 	}
-	if got.Password != "s3cr3t" {
+	if got.Password != "s3cr3t" || got.PrivateKey != "PRIVATE KEY" || got.Token != "token" || got.ClientKey != "CLIENT KEY" {
 		t.Fatalf("unexpected secret: %#v", got)
 	}
 

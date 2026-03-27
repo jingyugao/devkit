@@ -10,7 +10,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	xrunpaths "github.com/jingyugao/devkit/internal/xrun/paths"
+	authrunpaths "github.com/jingyugao/devkit/internal/authrun/paths"
 )
 
 var (
@@ -26,19 +26,30 @@ const (
 	TypeMySQL Type = "mysql"
 	TypeMongo Type = "mongo"
 	TypeRedis Type = "redis"
+	TypeSSH   Type = "ssh"
+	TypeKube  Type = "kube"
 )
 
 type Profile struct {
-	Name         string `toml:"-"`
-	Type         Type   `toml:"type"`
-	Host         string `toml:"host,omitempty"`
-	Port         int    `toml:"port,omitempty"`
-	Username     string `toml:"username,omitempty"`
-	Database     string `toml:"database,omitempty"`
-	AuthDatabase string `toml:"auth_database,omitempty"`
-	TLS          bool   `toml:"tls,omitempty"`
-	TLSCAFile    string `toml:"tls_ca_file,omitempty"`
-	Socket       string `toml:"socket,omitempty"`
+	Name                  string `toml:"-"`
+	Type                  Type   `toml:"type"`
+	Host                  string `toml:"host,omitempty"`
+	Port                  int    `toml:"port,omitempty"`
+	Username              string `toml:"username,omitempty"`
+	Database              string `toml:"database,omitempty"`
+	AuthDatabase          string `toml:"auth_database,omitempty"`
+	Namespace             string `toml:"namespace,omitempty"`
+	Cluster               string `toml:"cluster,omitempty"`
+	Context               string `toml:"context,omitempty"`
+	Server                string `toml:"server,omitempty"`
+	TLS                   bool   `toml:"tls,omitempty"`
+	TLSCAFile             string `toml:"tls_ca_file,omitempty"`
+	CertificateAuthority  string `toml:"certificate_authority,omitempty"`
+	ClientCertificate     string `toml:"client_certificate,omitempty"`
+	InsecureSkipTLSVerify bool   `toml:"insecure_skip_tls_verify,omitempty"`
+	Socket                string `toml:"socket,omitempty"`
+	PublicKey             string `toml:"public_key,omitempty"`
+	KnownHosts            string `toml:"known_hosts,omitempty"`
 }
 
 type file struct {
@@ -54,7 +65,7 @@ func NewStore(path string) *Store {
 }
 
 func NewDefaultStore() *Store {
-	return NewStore(xrunpaths.ProfilesFile())
+	return NewStore(authrunpaths.ProfilesFile())
 }
 
 func DefaultPort(t Type) int {
@@ -65,6 +76,8 @@ func DefaultPort(t Type) int {
 		return 27017
 	case TypeRedis:
 		return 6379
+	case TypeSSH:
+		return 22
 	default:
 		return 0
 	}
@@ -77,13 +90,32 @@ func (p Profile) Normalized() Profile {
 	p.Username = strings.TrimSpace(p.Username)
 	p.Database = strings.TrimSpace(p.Database)
 	p.AuthDatabase = strings.TrimSpace(p.AuthDatabase)
+	p.Namespace = strings.TrimSpace(p.Namespace)
+	p.Cluster = strings.TrimSpace(p.Cluster)
+	p.Context = strings.TrimSpace(p.Context)
+	p.Server = strings.TrimSpace(p.Server)
 	p.TLSCAFile = strings.TrimSpace(p.TLSCAFile)
+	p.CertificateAuthority = strings.TrimSpace(p.CertificateAuthority)
+	p.ClientCertificate = strings.TrimSpace(p.ClientCertificate)
 	p.Socket = strings.TrimSpace(p.Socket)
+	p.PublicKey = strings.TrimSpace(p.PublicKey)
+	p.KnownHosts = strings.TrimSpace(p.KnownHosts)
 	if p.TLSCAFile != "" {
 		p.TLS = true
 	}
-	if p.Port == 0 {
+	if p.CertificateAuthority != "" || p.ClientCertificate != "" {
+		p.TLS = true
+	}
+	if p.Port == 0 && DefaultPort(p.Type) != 0 {
 		p.Port = DefaultPort(p.Type)
+	}
+	if p.Type == TypeKube {
+		if p.Cluster == "" {
+			p.Cluster = p.Name
+		}
+		if p.Context == "" {
+			p.Context = p.Name
+		}
 	}
 	return p
 }
@@ -94,10 +126,10 @@ func (p Profile) Validate() error {
 	if !namePattern.MatchString(p.Name) {
 		return fmt.Errorf("invalid profile name %q", p.Name)
 	}
-	if DefaultPort(p.Type) == 0 {
+	if p.Type != TypeKube && DefaultPort(p.Type) == 0 {
 		return fmt.Errorf("unsupported profile type %q", p.Type)
 	}
-	if p.Port <= 0 {
+	if p.Type != TypeKube && p.Port <= 0 {
 		return fmt.Errorf("invalid port %d", p.Port)
 	}
 
@@ -131,6 +163,35 @@ func (p Profile) Validate() error {
 		}
 		if p.Socket != "" {
 			return fmt.Errorf("redis profile does not support socket")
+		}
+	case TypeSSH:
+		if p.Host == "" {
+			return fmt.Errorf("ssh profile requires --host")
+		}
+		if p.Username == "" {
+			return fmt.Errorf("ssh profile requires --username")
+		}
+		if p.Database != "" || p.AuthDatabase != "" || p.Namespace != "" || p.Server != "" || p.Cluster != "" || p.Context != "" {
+			return fmt.Errorf("ssh profile contains unsupported database or kube fields")
+		}
+		if p.CertificateAuthority != "" || p.ClientCertificate != "" {
+			return fmt.Errorf("ssh profile does not support kube certificate fields")
+		}
+		if p.Socket != "" {
+			return fmt.Errorf("ssh profile does not support socket")
+		}
+	case TypeKube:
+		if p.Server == "" {
+			return fmt.Errorf("kube profile requires --server")
+		}
+		if p.Host != "" || p.Port != 0 || p.Username != "" || p.Database != "" || p.AuthDatabase != "" || p.Socket != "" {
+			return fmt.Errorf("kube profile contains unsupported host or database fields")
+		}
+		if p.PublicKey != "" || p.KnownHosts != "" {
+			return fmt.Errorf("kube profile does not support ssh key fields")
+		}
+		if p.InsecureSkipTLSVerify && p.CertificateAuthority != "" {
+			return fmt.Errorf("kube profile cannot use certificate authority data with --insecure-skip-tls-verify")
 		}
 	default:
 		return fmt.Errorf("unsupported profile type %q", p.Type)
@@ -229,7 +290,7 @@ func (s *Store) save(data file) error {
 	if data.Profiles == nil {
 		data.Profiles = map[string]Profile{}
 	}
-	if err := xrunpaths.EnsureBaseDir(); err != nil {
+	if err := authrunpaths.EnsureBaseDir(); err != nil {
 		return err
 	}
 	raw, err := toml.Marshal(data)

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 )
 
-const appName = "xrun"
+const appName = "authrun"
 
 func BaseDir() string {
 	home, err := os.UserHomeDir()

@@ -5,7 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jingyugao/devkit/internal/xrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/store"
 )
 
 type mysqlAdapter struct{}
@@ -22,12 +23,12 @@ func (mysqlAdapter) DefaultTool() string {
 	return "mysql"
 }
 
-func (mysqlAdapter) PrepareExec(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {
-	return prepareMySQL(p, password, binary, userArgs)
+func (mysqlAdapter) PrepareExec(p profile.Profile, secret store.Secret, binary string, userArgs []string) (Prepared, error) {
+	return prepareMySQL(p, secret.Password, binary, userArgs)
 }
 
-func (mysqlAdapter) PrepareTest(p profile.Profile, password, binary string) (Prepared, error) {
-	return prepareMySQL(p, password, binary, []string{"-e", "SELECT 1"})
+func (mysqlAdapter) PrepareTest(p profile.Profile, secret store.Secret, binary string) (Prepared, error) {
+	return prepareMySQL(p, secret.Password, binary, []string{"-e", "SELECT 1"})
 }
 
 func prepareMySQL(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {
@@ -52,7 +53,7 @@ func prepareMySQL(p profile.Profile, password, binary string, userArgs []string)
 		config = append(config, "ssl-ca="+p.TLSCAFile)
 	}
 
-	path, cleanup, err := writeTempFile("xrun-mysql-*.cnf", strings.Join(config, "\n")+"\n")
+	path, cleanup, err := writeTempFile("authrun-mysql-*.cnf", strings.Join(config, "\n")+"\n")
 	if err != nil {
 		return Prepared{}, fmt.Errorf("create mysql option file: %w", err)
 	}

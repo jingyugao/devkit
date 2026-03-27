@@ -3,7 +3,7 @@
 `devkit` is a multi-tool Go repository. The current binaries are:
 
 - `keeprun`: run and supervise long-lived local commands in the background
-- `xrun`: launch database/queue CLIs with stored connection profiles and encrypted secrets
+- `authrun`: launch database/queue CLIs with stored connection profiles and encrypted secrets
 
 ## Installation
 
@@ -16,7 +16,7 @@
 
 ```bash
 go install github.com/jingyugao/devkit/cmd/keeprun@latest
-go install github.com/jingyugao/devkit/cmd/xrun@latest
+go install github.com/jingyugao/devkit/cmd/authrun@latest
 ```
 
 ### Build from Source
@@ -25,7 +25,7 @@ go install github.com/jingyugao/devkit/cmd/xrun@latest
 git clone https://github.com/jingyugao/devkit.git
 cd devkit
 go build -o keeprun ./cmd/keeprun
-go build -o xrun ./cmd/xrun
+go build -o authrun ./cmd/authrun
 ```
 
 ## keeprun
@@ -123,37 +123,39 @@ keeprun config set defaults.life 3d
 keeprun daemon status
 ```
 
-## xrun
+## authrun
 
-`xrun` stores connection profiles and secrets, then launches supported CLIs with the right authentication context.
+`authrun` stores connection profiles and secrets, then launches supported CLIs with the right authentication context.
 
 ### v1 Scope
 
-- Supported profile types: `mysql`, `mongo`, `redis`
-- Supported tools: `mysql`, `mongosh`, `redis-cli`
-- Profile metadata is stored in `~/.config/xrun/profiles.toml`
-- Secrets are stored in `~/.config/xrun/secrets.enc`
+- Supported profile types: `mysql`, `mongo`, `redis`, `ssh`, `kube`
+- Supported tools: `mysql`, `mongosh`, `redis-cli`, `ssh`, `scp`, `sftp`, `kubectl`, `k9s`
+- Profile metadata is stored in `~/.config/authrun/profiles.toml`
+- Secrets are stored in `~/.config/authrun/secrets.enc`
 - The encrypted secrets file uses a master key stored in the OS keyring
+- Public SSH and Kubernetes material such as known-hosts entries, client certs, and cluster CA data can live in profile metadata while private keys, passphrases, and tokens stay encrypted
 
 Linux requires a working Secret Service-compatible keyring. There is no plaintext or passphrase fallback in v1.
 
 ### Commands
 
 ```bash
-xrun add <profile> --type mysql|mongo|redis --host HOST [options]
-xrun list
-xrun rm <profile>
-xrun exec <profile> -- <tool> [args...]
-xrun test <profile> [--tool <tool>]
+authrun add <profile> --type mysql|mongo|redis|ssh|kube [options]
+authrun list
+authrun rm <profile>
+authrun exec <profile> -- <tool> [args...]
+authrun test <profile> [--tool <tool>]
 ```
 
-Common `xrun add` options:
+Common `authrun add` options:
 
-- `--type <mysql|mongo|redis>`
+- `--type <mysql|mongo|redis|ssh|kube>`
 - `--host <host>`
 - `--port <port>`
 - `--username <username>`
 - `--database <name>`
+- `--namespace <name>`
 - `--tls`
 - `--tls-ca-file <path>`
 - `--secret-stdin`
@@ -167,38 +169,75 @@ MySQL-only option:
 
 - `--socket <path>`
 
+SSH-only options:
+
+- `--private-key-file <path>` or `--private-key-env <ENV_NAME>` or `--private-key-stdin`
+- `--passphrase-env <ENV_NAME>` or `--passphrase-stdin`
+- `--public-key-file <path>`
+- `--known-hosts-file <path>`
+
+Kubernetes-only options:
+
+- `--server <https://api-server>`
+- `--cluster <name>`
+- `--context <name>`
+- `--namespace <name>`
+- `--ca-file <path>`
+- `--insecure-skip-tls-verify`
+- Token auth: `--secret-env`, `--secret-stdin`, or interactive prompt
+- Client cert auth: `--client-cert-file <path>` plus `--client-key-file <path>` or `--client-key-env <ENV_NAME>` or `--client-key-stdin`
+
 ### Examples
 
 Add a MySQL profile and read the password from a terminal prompt:
 
 ```bash
-xrun add user_db --type mysql --host 127.0.0.1 --port 3306 --username app --database users
+authrun add user_db --type mysql --host 127.0.0.1 --port 3306 --username app --database users
 ```
 
 Add a Redis profile from an environment variable:
 
 ```bash
 export REDIS_PASSWORD='secret'
-xrun add cache --type redis --host 127.0.0.1 --port 6379 --username default --secret-env REDIS_PASSWORD
+authrun add cache --type redis --host 127.0.0.1 --port 6379 --username default --secret-env REDIS_PASSWORD
+```
+
+Add an SSH profile from a private key file:
+
+```bash
+authrun add shell --type ssh --host ssh.example.com --username ops --private-key-file ~/.ssh/id_ed25519 --known-hosts-file ~/.ssh/known_hosts
+```
+
+Add a Kubernetes profile using a bearer token:
+
+```bash
+export KUBE_TOKEN='secret-token'
+authrun add dev-cluster --type kube --server https://k8s.example.com:6443 --namespace dev --cluster dev --context dev --secret-env KUBE_TOKEN
 ```
 
 List saved profiles:
 
 ```bash
-xrun list
+authrun list
 ```
 
 Run a CLI with the stored profile:
 
 ```bash
-xrun exec user_db -- mysql -e 'SELECT NOW()'
-xrun exec cache -- redis-cli PING
-xrun exec docs -- mongosh
+authrun exec user_db -- mysql -e 'SELECT NOW()'
+authrun exec cache -- redis-cli PING
+authrun exec docs -- mongosh
+authrun exec shell -- ssh uname -a
+authrun exec shell -- sftp
+authrun exec dev-cluster -- kubectl get pods -A
+authrun exec dev-cluster -- k9s
 ```
 
 Validate a stored profile:
 
 ```bash
-xrun test user_db
-xrun test cache --tool redis-cli
+authrun test user_db
+authrun test cache --tool redis-cli
+authrun test shell
+authrun test dev-cluster
 ```

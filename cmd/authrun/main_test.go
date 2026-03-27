@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jingyugao/devkit/internal/xrun/adapter"
-	"github.com/jingyugao/devkit/internal/xrun/profile"
-	"github.com/jingyugao/devkit/internal/xrun/store"
+	"github.com/jingyugao/devkit/internal/authrun/adapter"
+	"github.com/jingyugao/devkit/internal/authrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/store"
 )
 
 type fakeProfileStore struct {
@@ -86,11 +86,11 @@ type fakeRegistry struct {
 	testErr      error
 }
 
-func (f fakeRegistry) PrepareExec(profile.Profile, string, string, []string) (adapter.Prepared, error) {
+func (f fakeRegistry) PrepareExec(profile.Profile, store.Secret, string, []string) (adapter.Prepared, error) {
 	return f.preparedExec, f.execErr
 }
 
-func (f fakeRegistry) PrepareTest(profile.Profile, string, string) (adapter.Prepared, error) {
+func (f fakeRegistry) PrepareTest(profile.Profile, store.Secret, string) (adapter.Prepared, error) {
 	return f.preparedTest, f.testErr
 }
 
@@ -129,10 +129,69 @@ func TestAddStoresProfileAndSecret(t *testing.T) {
 	}
 }
 
+func TestAddStoresSSHProfileAndKeyMaterial(t *testing.T) {
+	profiles := &fakeProfileStore{items: map[string]profile.Profile{}}
+	secrets := &fakeSecretStore{items: map[string]store.Secret{}}
+
+	keyFile := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(keyFile, []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nkey\n-----END OPENSSH PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	app := &app{
+		profiles:   profiles,
+		secrets:    secrets,
+		adapters:   fakeRegistry{},
+		stdin:      strings.NewReader(""),
+		stdout:     &bytes.Buffer{},
+		stderr:     &bytes.Buffer{},
+		environ:    func() []string { return nil },
+		execCmd:    exec.Command,
+		isTTY:      func() bool { return false },
+		readSecret: func() (string, error) { return "", nil },
+	}
+
+	if err := app.run([]string{"add", "shell", "--type", "ssh", "--host", "ssh.example", "--username", "ops", "--private-key-file", keyFile}); err != nil {
+		t.Fatalf("run(add ssh) returned error: %v", err)
+	}
+	if got := secrets.items["shell"].PrivateKey; !strings.Contains(got, "OPENSSH PRIVATE KEY") {
+		t.Fatalf("unexpected stored private key: %q", got)
+	}
+}
+
+func TestAddStoresKubeTokenProfile(t *testing.T) {
+	profiles := &fakeProfileStore{items: map[string]profile.Profile{}}
+	secrets := &fakeSecretStore{items: map[string]store.Secret{}}
+	app := &app{
+		profiles: profiles,
+		secrets:  secrets,
+		adapters: fakeRegistry{},
+		stdin:    strings.NewReader(""),
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
+		environ: func() []string {
+			return []string{"KUBE_TOKEN=tok"}
+		},
+		execCmd: exec.Command,
+		isTTY:   func() bool { return false },
+		readSecret: func() (string, error) {
+			return "", nil
+		},
+	}
+	t.Setenv("KUBE_TOKEN", "tok")
+
+	if err := app.run([]string{"add", "cluster", "--type", "kube", "--server", "https://k8s.example:6443", "--namespace", "dev", "--secret-env", "KUBE_TOKEN"}); err != nil {
+		t.Fatalf("run(add kube) returned error: %v", err)
+	}
+	if got := secrets.items["cluster"].Token; got != "tok" {
+		t.Fatalf("unexpected stored token: %q", got)
+	}
+}
+
 func TestExecForwardsIOExitCodeAndCleanup(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "fake-tool.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nread line\necho \"out:$XRUN_TEST:$1:$line\"\necho \"err:$2\" 1>&2\nexit 7\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nread line\necho \"out:$AUTHRUN_TEST:$1:$line\"\necho \"err:$2\" 1>&2\nexit 7\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 	cleanupFile := filepath.Join(dir, "cleanup.tmp")
@@ -154,7 +213,7 @@ func TestExecForwardsIOExitCodeAndCleanup(t *testing.T) {
 			preparedExec: adapter.Prepared{
 				Path: script,
 				Args: []string{"ARG1", "ARG2"},
-				Env:  []string{"XRUN_TEST=ok"},
+				Env:  []string{"AUTHRUN_TEST=ok"},
 				Cleanup: func() error {
 					return os.Remove(cleanupFile)
 				},

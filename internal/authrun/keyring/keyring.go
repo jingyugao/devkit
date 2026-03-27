@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultService = "xrun"
+	defaultService = "authrun"
 	defaultUser    = "master-key"
 	keySize        = 32
 )

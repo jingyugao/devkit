@@ -3,7 +3,8 @@ package adapter
 import (
 	"strconv"
 
-	"github.com/jingyugao/devkit/internal/xrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/store"
 )
 
 type redisAdapter struct{}
@@ -20,12 +21,12 @@ func (redisAdapter) DefaultTool() string {
 	return "redis-cli"
 }
 
-func (redisAdapter) PrepareExec(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {
-	return prepareRedis(p, password, binary, userArgs)
+func (redisAdapter) PrepareExec(p profile.Profile, secret store.Secret, binary string, userArgs []string) (Prepared, error) {
+	return prepareRedis(p, secret.Password, binary, userArgs)
 }
 
-func (redisAdapter) PrepareTest(p profile.Profile, password, binary string) (Prepared, error) {
-	return prepareRedis(p, password, binary, []string{"PING"})
+func (redisAdapter) PrepareTest(p profile.Profile, secret store.Secret, binary string) (Prepared, error) {
+	return prepareRedis(p, secret.Password, binary, []string{"PING"})
 }
 
 func prepareRedis(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {

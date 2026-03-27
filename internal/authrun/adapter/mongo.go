@@ -6,7 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jingyugao/devkit/internal/xrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/profile"
+	"github.com/jingyugao/devkit/internal/authrun/store"
 )
 
 type mongoAdapter struct{}
@@ -23,8 +24,8 @@ func (mongoAdapter) DefaultTool() string {
 	return "mongosh"
 }
 
-func (mongoAdapter) PrepareExec(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {
-	script, cleanup, err := mongoScript(p, password, true)
+func (mongoAdapter) PrepareExec(p profile.Profile, secret store.Secret, binary string, userArgs []string) (Prepared, error) {
+	script, cleanup, err := mongoScript(p, secret.Password, true)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -38,8 +39,8 @@ func (mongoAdapter) PrepareExec(p profile.Profile, password, binary string, user
 	}, nil
 }
 
-func (mongoAdapter) PrepareTest(p profile.Profile, password, binary string) (Prepared, error) {
-	script, cleanup, err := mongoScript(p, password, false)
+func (mongoAdapter) PrepareTest(p profile.Profile, secret store.Secret, binary string) (Prepared, error) {
+	script, cleanup, err := mongoScript(p, secret.Password, false)
 	if err != nil {
 		return Prepared{}, err
 	}
@@ -78,7 +79,7 @@ func mongoScript(p profile.Profile, password string, interactive bool) (string, 
 		fmt.Sprintf("db = db.getMongo().getDB(%s);", mustJSONString(targetDB)),
 	}
 	if interactive {
-		script = append(script, "print('xrun authentication loaded');")
+		script = append(script, "print('authrun authentication loaded');")
 	} else {
 		script = append(script,
 			"const result = db.runCommand({ ping: 1 });",
@@ -86,7 +87,7 @@ func mongoScript(p profile.Profile, password string, interactive bool) (string, 
 			"quit(0);",
 		)
 	}
-	path, cleanup, err := writeTempFile("xrun-mongo-*.js", strings.Join(script, "\n")+"\n")
+	path, cleanup, err := writeTempFile("authrun-mongo-*.js", strings.Join(script, "\n")+"\n")
 	if err != nil {
 		return "", nil, fmt.Errorf("create mongo bootstrap script: %w", err)
 	}

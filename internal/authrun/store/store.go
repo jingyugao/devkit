@@ -12,7 +12,7 @@ import (
 	"io"
 	"os"
 
-	xrunpaths "github.com/jingyugao/devkit/internal/xrun/paths"
+	authrunpaths "github.com/jingyugao/devkit/internal/authrun/paths"
 )
 
 const currentVersion = 1
@@ -25,7 +25,11 @@ type MasterKeyProvider interface {
 }
 
 type Secret struct {
-	Password string `json:"password"`
+	Password   string `json:"password,omitempty"`
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+	Token      string `json:"token,omitempty"`
+	ClientKey  string `json:"client_key,omitempty"`
 }
 
 type envelope struct {
@@ -53,7 +57,7 @@ func NewStore(path string, keys MasterKeyProvider) *Store {
 }
 
 func NewDefaultStore(keys MasterKeyProvider) *Store {
-	return NewStore(xrunpaths.SecretsFile(), keys)
+	return NewStore(authrunpaths.SecretsFile(), keys)
 }
 
 func (s *Store) Put(ctx context.Context, name string, secret Secret) error {
@@ -129,7 +133,7 @@ func (s *Store) save(ctx context.Context, data payload) error {
 	if data.Profiles == nil {
 		data.Profiles = map[string]Secret{}
 	}
-	if err := xrunpaths.EnsureBaseDir(); err != nil {
+	if err := authrunpaths.EnsureBaseDir(); err != nil {
 		return err
 	}
 	key, err := s.keys.LoadOrCreate(ctx)
