@@ -3,23 +3,23 @@
 `devkit` is a multi-tool Go repository. The current binaries are:
 
 - `keeprun`: run and supervise long-lived local commands in the background
-- `authrun`: launch database/queue CLIs with stored connection profiles and encrypted secrets
+- `authrun`: launch CLIs with stored connection profiles and encrypted secrets
 
-## Installation
-
-### Requirements
+## Requirements
 
 - Go 1.26+
 - macOS or Linux
 
-### Install with Go
+## Installation
+
+Install the binaries with Go:
 
 ```bash
 go install github.com/jingyugao/devkit/cmd/keeprun@latest
 go install github.com/jingyugao/devkit/cmd/authrun@latest
 ```
 
-### Build from Source
+Or build them from source:
 
 ```bash
 git clone https://github.com/jingyugao/devkit.git
@@ -39,6 +39,7 @@ go build -o authrun ./cmd/authrun
 - Automatic restart after process exit
 - Automatic task rehydration when the daemon starts again
 - List tasks, stop/start them, remove them, and inspect logs
+- Short task IDs for easier day-to-day task management
 - Global default config similar to `git config`
 - macOS `LaunchAgent` support
 - Linux `systemd --user` support
@@ -57,7 +58,39 @@ If you need shell features such as pipes, redirects, or shell expansion, wrap th
 keeprun sh -lc 'python app.py >> app.log 2>&1'
 ```
 
-### Usage
+### Quick Start
+
+Run a command as a managed background task:
+
+```bash
+keeprun python httpserver.py
+```
+
+Run with a name and a 3-day lifetime:
+
+```bash
+keeprun --name httpserver --life 3d python httpserver.py
+```
+
+List and inspect tasks:
+
+```bash
+keeprun ls
+keeprun ps
+keeprun logs httpserver
+keeprun logs -f httpserver
+```
+
+Stop, start, and remove a task:
+
+```bash
+keeprun stop httpserver
+keeprun start httpserver
+keeprun start --all
+keeprun rm httpserver
+```
+
+### Command Usage
 
 Task creation supports both forms:
 
@@ -89,9 +122,22 @@ keeprun daemon install|uninstall|status
 keeprun help
 ```
 
-### Config and Data
+Task references accept a task name, full task ID, or a unique short ID prefix.
 
-Global config is stored at `~/.config/keeprun/config.toml`.
+### Configuration
+
+Global config is stored at:
+
+```text
+~/.config/keeprun/config.toml
+```
+
+Supported config keys:
+
+- `defaults.life`
+- `defaults.stop_timeout`
+- `defaults.env_pass`
+- `logs.tail_lines`
 
 Built-in defaults:
 
@@ -105,23 +151,53 @@ env_pass = []
 tail_lines = 200
 ```
 
-Runtime data lives under `~/.config/keeprun/`:
-
-- `config.toml`
-- `tasks/<task-id>.json`
-- `logs/<task-id>.log`
-- `run/daemon.sock`
-- `run/daemon.pid`
-
-### Examples
+Examples:
 
 ```bash
-keeprun --name httpserver --life 3d python httpserver.py
-keeprun --name api --cwd /path/to/project ./bin/api-server
-keeprun --name worker --env-pass VIRTUAL_ENV --env-pass PATH python worker.py
 keeprun config set defaults.life 3d
-keeprun daemon status
+keeprun config set defaults.env_pass VIRTUAL_ENV,PYENV_VERSION
+keeprun config set logs.tail_lines 500
+keeprun config list
 ```
+
+### Data Layout
+
+`keeprun` stores runtime data under:
+
+```text
+~/.config/keeprun/
+```
+
+Important paths:
+
+- `~/.config/keeprun/config.toml`
+- `~/.config/keeprun/tasks/<task-id>.json`
+- `~/.config/keeprun/logs/<task-id>.log`
+- `~/.config/keeprun/run/daemon.sock`
+- `~/.config/keeprun/run/daemon.pid`
+
+### Daemon Behavior
+
+- The first mutating command installs or starts the per-user daemon automatically
+- Tasks restart automatically after process exit unless you stop them manually
+- Tasks with `desired_state=running` are started automatically when the daemon starts again
+- `life` is a wall-clock deadline, not accumulated runtime
+- When a task expires, it is stopped and marked `expired`
+- Logs are stored as combined stdout/stderr with timestamps
+- `keeprun ls` shows the short task ID plus restart counts
+
+You can also manage the daemon explicitly:
+
+```bash
+keeprun daemon install
+keeprun daemon status
+keeprun daemon uninstall
+```
+
+Platform integration:
+
+- macOS: `~/Library/LaunchAgents/com.keeprun.daemon.plist`
+- Linux: `~/.config/systemd/user/keeprund.service`
 
 ## authrun
 
@@ -134,7 +210,7 @@ keeprun daemon status
 - Profile metadata is stored in `~/.config/authrun/profiles.toml`
 - Secrets are stored in `~/.config/authrun/secrets.enc`
 - The encrypted secrets file uses a master key stored in the OS keyring
-- Public SSH and Kubernetes material such as known-hosts entries, client certs, and cluster CA data can live in profile metadata while private keys, passphrases, and tokens stay encrypted
+- Public SSH and Kubernetes material such as known-hosts entries, client certs, and cluster CA data can live in profile metadata while private keys, passphrases, tokens, and client keys stay encrypted
 
 Linux requires a working Secret Service-compatible keyring. There is no plaintext or passphrase fallback in v1.
 
@@ -148,7 +224,7 @@ authrun exec <profile> -- <tool> [args...]
 authrun test <profile> [--tool <tool>]
 ```
 
-Common `authrun add` options:
+### Common `authrun add` Options
 
 - `--type <mysql|mongo|redis|ssh|kube>`
 - `--host <host>`
@@ -161,31 +237,24 @@ Common `authrun add` options:
 - `--secret-stdin`
 - `--secret-env <ENV_NAME>`
 
-Mongo-only option:
+Backend-specific options:
 
-- `--auth-database <name>`
-
-MySQL-only option:
-
-- `--socket <path>`
-
-SSH-only options:
-
-- `--private-key-file <path>` or `--private-key-env <ENV_NAME>` or `--private-key-stdin`
-- `--passphrase-env <ENV_NAME>` or `--passphrase-stdin`
-- `--public-key-file <path>`
-- `--known-hosts-file <path>`
-
-Kubernetes-only options:
-
-- `--server <https://api-server>`
-- `--cluster <name>`
-- `--context <name>`
-- `--namespace <name>`
-- `--ca-file <path>`
-- `--insecure-skip-tls-verify`
-- Token auth: `--secret-env`, `--secret-stdin`, or interactive prompt
-- Client cert auth: `--client-cert-file <path>` plus `--client-key-file <path>` or `--client-key-env <ENV_NAME>` or `--client-key-stdin`
+- Mongo: `--auth-database <name>`
+- MySQL: `--socket <path>`
+- SSH:
+  - `--private-key-file <path>` or `--private-key-env <ENV_NAME>` or `--private-key-stdin`
+  - `--passphrase-env <ENV_NAME>` or `--passphrase-stdin`
+  - `--public-key-file <path>`
+  - `--known-hosts-file <path>`
+- Kubernetes:
+  - `--server <https://api-server>`
+  - `--cluster <name>`
+  - `--context <name>`
+  - `--namespace <name>`
+  - `--ca-file <path>`
+  - `--insecure-skip-tls-verify`
+  - token auth via `--secret-env`, `--secret-stdin`, or interactive prompt
+  - client cert auth via `--client-cert-file <path>` plus `--client-key-file <path>` or `--client-key-env <ENV_NAME>` or `--client-key-stdin`
 
 ### Examples
 

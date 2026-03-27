@@ -47,6 +47,13 @@ type Record struct {
 	State State `json:"state"`
 }
 
+func ShortID(id string) string {
+	if len(id) <= 6 {
+		return id
+	}
+	return id[:6]
+}
+
 func (r Record) IsExpired(now time.Time) bool {
 	return r.Spec.ExpiresAt != nil && !now.Before(*r.Spec.ExpiresAt)
 }
@@ -59,5 +66,5 @@ func (r Record) Identifier() string {
 }
 
 func (r Record) DisplayID() string {
-	return r.Spec.ID
+	return ShortID(r.Spec.ID)
 }
