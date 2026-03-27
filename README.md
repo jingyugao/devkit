@@ -210,6 +210,8 @@ Platform integration:
 - Profile metadata is stored in `~/.config/authrun/profiles.toml`
 - Secrets are stored in `~/.config/authrun/secrets.enc`
 - The encrypted secrets file uses a master key stored in the OS keyring
+- `authrun k9s` builds a temporary merged kubeconfig from all imported kube profiles
+- `authrun kubectl ...` stays explicit when multiple kube profiles exist; use `authrun exec <profile> -- kubectl ...`
 - Public SSH and Kubernetes material such as known-hosts entries, client certs, and cluster CA data can live in profile metadata while private keys, passphrases, tokens, and client keys stay encrypted
 
 Linux requires a working Secret Service-compatible keyring. There is no plaintext or passphrase fallback in v1.
@@ -218,7 +220,12 @@ Linux requires a working Secret Service-compatible keyring. There is no plaintex
 
 ```bash
 authrun add <profile> --type mysql|mongo|redis|ssh|kube [options]
-authrun list
+authrun import all [--ssh <profile[:host]>] [--kube <profile[:context]>] [--mysql <profile>] [--login-path <login-path>]
+authrun import ssh <profile> [--host <alias>] [--config <path>]
+authrun import ssh <user@host> [ssh options]
+authrun import kube <profile> [--context <context>] [--kubeconfig <path>]
+authrun import mysql <profile> [--login-path <login-path>] [--database <name>]
+authrun ls
 authrun rm <profile>
 authrun exec <profile> -- <tool> [args...]
 authrun test <profile> [--tool <tool>]
@@ -277,6 +284,20 @@ Add an SSH profile from a private key file:
 authrun add shell --type ssh --host ssh.example.com --username ops --private-key-file ~/.ssh/id_ed25519 --known-hosts-file ~/.ssh/known_hosts
 ```
 
+Import an SSH profile from your local `~/.ssh/config`:
+
+```bash
+authrun import ssh shell --host devbox
+authrun test shell
+```
+
+Import a raw SSH target directly:
+
+```bash
+authrun import ssh wsl@aliyun.gaojingyu.site -oPort=23456 -i ~/.ssh/yuebai
+authrun import ssh root@aliyun.gaojingyu.site -i ~/.ssh/yuebai
+```
+
 Add a Kubernetes profile using a bearer token:
 
 ```bash
@@ -284,10 +305,34 @@ export KUBE_TOKEN='secret-token'
 authrun add dev-cluster --type kube --server https://k8s.example.com:6443 --namespace dev --cluster dev --context dev --secret-env KUBE_TOKEN
 ```
 
+Import a Kubernetes context from your local kubeconfig:
+
+```bash
+authrun import kube dev-cluster --context dev
+authrun test dev-cluster
+```
+
+Import a MySQL login path from your local `mysql_config_editor` config:
+
+```bash
+authrun import mysql doris --login-path doris
+authrun test doris
+```
+
+Import SSH, Kubernetes, and MySQL in one command:
+
+```bash
+authrun import all \
+  --ssh shell:devbox \
+  --kube dev-cluster:dev \
+  --mysql doris \
+  --login-path doris
+```
+
 List saved profiles:
 
 ```bash
-authrun list
+authrun ls
 ```
 
 Run a CLI with the stored profile:
@@ -301,6 +346,17 @@ authrun exec shell -- sftp
 authrun exec dev-cluster -- kubectl get pods -A
 authrun exec dev-cluster -- k9s
 ```
+
+Shortcut mode is also available:
+
+```bash
+authrun mysql -e 'SELECT NOW()'
+authrun k9s
+authrun ssh root@aliyun.gaojingyu.site
+```
+
+`authrun k9s` merges all imported kube profiles into a temporary kubeconfig. `authrun kubectl ...` still requires an explicit profile if more than one kube profile is configured.
+`authrun ssh [ssh args...]` is compatible with normal `ssh` syntax. Raw targets like `authrun ssh root@aliyun.gaojingyu.site` are passed through to native SSH resolution. If you want authrun-managed SSH secrets, use `authrun exec <profile> -- ssh` or `authrun ssh <stored-profile-name>`.
 
 Validate a stored profile:
 

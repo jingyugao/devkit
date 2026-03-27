@@ -32,6 +32,40 @@ func (mysqlAdapter) PrepareTest(p profile.Profile, secret store.Secret, binary s
 }
 
 func prepareMySQL(p profile.Profile, password, binary string, userArgs []string) (Prepared, error) {
+	if p.MySQLLoginPath != "" {
+		args := []string{"--login-path=" + p.MySQLLoginPath}
+		if p.Username != "" {
+			args = append(args, "--user="+p.Username)
+		}
+		if p.Host != "" {
+			args = append(args, "--host="+p.Host)
+		}
+		if p.Port > 0 {
+			args = append(args, "--port="+strconv.Itoa(p.Port))
+		}
+		if p.Socket != "" {
+			args = append(args, "--socket="+p.Socket)
+		}
+		if p.TLS {
+			args = append(args, "--ssl-mode=REQUIRED")
+		}
+		if p.TLSCAFile != "" {
+			args = append(args, "--ssl-ca="+p.TLSCAFile)
+		}
+		if p.Database != "" {
+			args = append(args, "--database="+p.Database)
+		}
+		args = append(args, userArgs...)
+		return Prepared{
+			Path: binary,
+			Args: args,
+		}, nil
+	}
+
+	if password == "" {
+		return Prepared{}, fmt.Errorf("mysql profile %q requires a password secret or mysql login path", p.Name)
+	}
+
 	config := []string{"[client]"}
 	if p.Username != "" {
 		config = append(config, "user="+p.Username)

@@ -34,7 +34,11 @@ func (sshAdapter) PrepareExec(p profile.Profile, secret store.Secret, binary str
 	var args []string
 	switch tool {
 	case "ssh":
-		args = append(append(common, destination), userArgs...)
+		options, remote := splitSSHExecArgs(userArgs, destination, p.Host)
+		args = append(args, common...)
+		args = append(args, options...)
+		args = append(args, destination)
+		args = append(args, remote...)
 	case "sftp":
 		args = append(common, userArgs...)
 		args = append(args, destination)
@@ -156,4 +160,45 @@ func sshCommon(p profile.Profile, secret store.Secret) ([]string, []string, func
 
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func splitSSHExecArgs(userArgs []string, destination, host string) ([]string, []string) {
+	options := make([]string, 0, len(userArgs))
+	destSeen := false
+
+	for i := 0; i < len(userArgs); i++ {
+		arg := userArgs[i]
+		if arg == "--" {
+			return options, append([]string{}, userArgs[i+1:]...)
+		}
+		if !destSeen && isSSHDestinationArg(arg, destination, host) {
+			destSeen = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			options = append(options, arg)
+			if sshOptionConsumesArg(arg) && i+1 < len(userArgs) {
+				i++
+				options = append(options, userArgs[i])
+			}
+			continue
+		}
+		return options, append([]string{}, userArgs[i:]...)
+	}
+
+	return options, nil
+}
+
+func isSSHDestinationArg(arg, destination, host string) bool {
+	value := strings.TrimSpace(arg)
+	return value == destination || value == host
+}
+
+func sshOptionConsumesArg(arg string) bool {
+	switch arg {
+	case "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w":
+		return true
+	default:
+		return false
+	}
 }

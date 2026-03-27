@@ -32,6 +32,11 @@ type Registry struct {
 	byType map[profile.Type]Adapter
 }
 
+type kubeProfileSecret struct {
+	profile profile.Profile
+	secret  store.Secret
+}
+
 func NewRegistry() *Registry {
 	registry := &Registry{
 		byTool: map[string]Adapter{},
@@ -88,6 +93,35 @@ func (r *Registry) DefaultTool(t profile.Type) (string, error) {
 		return "", err
 	}
 	return adapter.DefaultTool(), nil
+}
+
+func (r *Registry) ProfileTypeForTool(binary string) (profile.Type, error) {
+	base := filepath.Base(binary)
+	adapter, ok := r.byTool[base]
+	if !ok {
+		return "", fmt.Errorf("%w %q", ErrUnsupportedTool, base)
+	}
+	return adapter.ProfileType(), nil
+}
+
+func (r *Registry) PrepareKubeAggregateExec(profiles []profile.Profile, secrets []store.Secret, binary string, userArgs []string) (Prepared, error) {
+	if len(profiles) == 0 {
+		return Prepared{}, fmt.Errorf("no kube profiles provided")
+	}
+	if len(profiles) != len(secrets) {
+		return Prepared{}, fmt.Errorf("kube aggregate profiles and secrets length mismatch")
+	}
+	entries := make([]kubeProfileSecret, 0, len(profiles))
+	for i := range profiles {
+		if profiles[i].Type != profile.TypeKube {
+			return Prepared{}, fmt.Errorf("profile %q is not a kube profile", profiles[i].Name)
+		}
+		entries = append(entries, kubeProfileSecret{
+			profile: profiles[i],
+			secret:  secrets[i],
+		})
+	}
+	return prepareKubeAggregate(entries, binary, userArgs)
 }
 
 func (r *Registry) adapterForType(t profile.Type) (Adapter, error) {
