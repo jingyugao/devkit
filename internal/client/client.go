@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jingyugao/keep-run/internal/ipc"
-	"github.com/jingyugao/keep-run/internal/paths"
-	"github.com/jingyugao/keep-run/internal/task"
+	"github.com/jingyugao/devkit/internal/ipc"
+	"github.com/jingyugao/devkit/internal/paths"
+	"github.com/jingyugao/devkit/internal/task"
 )
 
 type Client struct {

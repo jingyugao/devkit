@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,12 +21,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jingyugao/keep-run/internal/config"
-	"github.com/jingyugao/keep-run/internal/durationutil"
-	"github.com/jingyugao/keep-run/internal/ipc"
-	"github.com/jingyugao/keep-run/internal/paths"
-	"github.com/jingyugao/keep-run/internal/storage"
-	"github.com/jingyugao/keep-run/internal/task"
+	"github.com/jingyugao/devkit/internal/config"
+	"github.com/jingyugao/devkit/internal/durationutil"
+	"github.com/jingyugao/devkit/internal/ipc"
+	"github.com/jingyugao/devkit/internal/paths"
+	"github.com/jingyugao/devkit/internal/storage"
+	"github.com/jingyugao/devkit/internal/task"
 )
 
 type Server struct {
@@ -411,7 +412,19 @@ func (s *Server) ensureTaskRunning(record task.Record) (task.Record, error) {
 	if err != nil {
 		return task.Record{}, err
 	}
-	cmd := exec.Command(record.Spec.Argv[0], record.Spec.Argv[1:]...)
+	resolvedPath, err := resolveExecutablePath(record.Spec.Argv[0], record.Spec.Env)
+	if err != nil {
+		now := time.Now()
+		record.State.RuntimeState = task.StateFailed
+		record.State.Reason = fmt.Sprintf("start failed: %v", err)
+		record.State.StoppedAt = &now
+		record.State.PID = 0
+		record.State.ExitCode = nil
+		_ = s.store.Save(record)
+		logFile.Close()
+		return task.Record{}, err
+	}
+	cmd := exec.Command(resolvedPath, record.Spec.Argv[1:]...)
 	cmd.Dir = record.Spec.Cwd
 	cmd.Env = envMapToSlice(record.Spec.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -427,6 +440,13 @@ func (s *Server) ensureTaskRunning(record task.Record) (task.Record, error) {
 		return task.Record{}, err
 	}
 	if err := cmd.Start(); err != nil {
+		now := time.Now()
+		record.State.RuntimeState = task.StateFailed
+		record.State.Reason = fmt.Sprintf("start failed: %v", err)
+		record.State.StoppedAt = &now
+		record.State.PID = 0
+		record.State.ExitCode = nil
+		_ = s.store.Save(record)
 		logFile.Close()
 		return task.Record{}, err
 	}
@@ -763,6 +783,35 @@ func envMapToSlice(in map[string]string) []string {
 		out = append(out, key+"="+in[key])
 	}
 	return out
+}
+
+func resolveExecutablePath(command string, env map[string]string) (string, error) {
+	if command == "" {
+		return "", fmt.Errorf("missing command")
+	}
+	if strings.ContainsRune(command, os.PathSeparator) {
+		return command, nil
+	}
+
+	pathValue := env["PATH"]
+	if pathValue == "" {
+		pathValue = os.Getenv("PATH")
+	}
+	for _, dir := range filepath.SplitList(pathValue) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, command)
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if info.Mode()&0o111 == 0 {
+			continue
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("exec: %q: executable file not found in $PATH", command)
 }
 
 func exitCodeFrom(err error) int {

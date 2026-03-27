@@ -1,33 +1,56 @@
-# keep-run
+# devkit
 
-`keeprun` is a small Go CLI for turning a command into a managed background task.
+`devkit` is a multi-tool Go repository. The current binaries are:
 
-It is designed for long-running, non-interactive processes such as:
+- `keeprun`: run and supervise long-lived local commands in the background
+- `authrun`: launch CLIs with stored connection profiles and encrypted secrets
 
-- `python httpserver.py`
-- local API servers
-- sync workers
-- scripts that should keep running after you close the terminal
+## Requirements
 
-`keeprun` stores task state under `~/.config/keeprun/`, starts a per-user daemon, and can restore selected tasks after login on macOS and Linux.
+- Go 1.26+
+- macOS or Linux
 
-## Features
+## Installation
+
+Install the binaries with Go:
+
+```bash
+go install github.com/jingyugao/devkit/cmd/keeprun@latest
+go install github.com/jingyugao/devkit/cmd/authrun@latest
+```
+
+Or build them from source:
+
+```bash
+git clone https://github.com/jingyugao/devkit.git
+cd devkit
+go build -o keeprun ./cmd/keeprun
+go build -o authrun ./cmd/authrun
+```
+
+## keeprun
+
+`keeprun` turns a non-interactive command into a managed background task.
+
+### Features
 
 - Run a command in the background and track it as a named task
 - Optional wall-clock lifetime such as `3d`, `12h`, or `1h30m`
 - Automatic restart after process exit
-- Automatic task rehydration when the `keeprun` daemon starts again
-- List tasks, stop/start them, delete them, and inspect logs
+- Automatic task rehydration when the daemon starts again
+- List tasks, stop/start them, remove them, and inspect logs
+- Short task IDs for easier day-to-day task management
 - Global default config similar to `git config`
 - macOS `LaunchAgent` support
 - Linux `systemd --user` support
 
-## Limitations
+### Important Restrictions
 
-- Non-interactive tasks only
+- Only non-interactive commands are supported
 - Commands are executed directly, not through a shell
 - Windows is not supported in v1
 - Linux support assumes `systemd --user` is available
+- Built-in `keeprun` subcommand names are reserved and cannot be launched as managed child commands, even with `keeprun run -- ...`
 
 If you need shell features such as pipes, redirects, or shell expansion, wrap the command explicitly:
 
@@ -35,35 +58,7 @@ If you need shell features such as pipes, redirects, or shell expansion, wrap th
 keeprun sh -lc 'python app.py >> app.log 2>&1'
 ```
 
-## Installation
-
-### Requirements
-
-- Go 1.26+
-- macOS or Linux
-
-### Install with Go
-
-```bash
-go install github.com/jingyugao/keep-run/cmd/keeprun@latest
-```
-
-This installs `keeprun` into your Go bin directory, usually:
-
-- `$(go env GOPATH)/bin`
-- or `$(go env GOBIN)` if you set it explicitly
-
-Make sure that directory is on your `PATH`.
-
-### Build from source
-
-```bash
-git clone https://github.com/jingyugao/keep-run.git
-cd keep-run
-go build -o keeprun ./cmd/keeprun
-```
-
-## Quick start
+### Quick Start
 
 Run a command as a managed background task:
 
@@ -77,27 +72,12 @@ Run with a name and a 3-day lifetime:
 keeprun --name httpserver --life 3d python httpserver.py
 ```
 
-List all tasks:
+List and inspect tasks:
 
 ```bash
 keeprun ls
-```
-
-List running tasks only:
-
-```bash
 keeprun ps
-```
-
-View logs:
-
-```bash
 keeprun logs httpserver
-```
-
-Follow logs:
-
-```bash
 keeprun logs -f httpserver
 ```
 
@@ -110,13 +90,7 @@ keeprun start --all
 keeprun rm httpserver
 ```
 
-Force remove a running task:
-
-```bash
-keeprun rm --force httpserver
-```
-
-## Command usage
+### Command Usage
 
 Task creation supports both forms:
 
@@ -125,9 +99,7 @@ keeprun [run flags] <cmd> [args...]
 keeprun run [run flags] -- <cmd> [args...]
 ```
 
-Use `keeprun run -- ...` if your command name collides with a management subcommand such as `run`, `logs`, or `start`.
-
-### Run flags
+Run flags:
 
 - `--name <name>`: optional unique task name
 - `--life <duration>`: max wall-clock life such as `30m`, `12h`, `3d`, `2w`
@@ -135,7 +107,7 @@ Use `keeprun run -- ...` if your command name collides with a management subcomm
 - `--env KEY=VALUE`: add or override an environment variable
 - `--env-pass KEY`: copy a variable from the current shell into the saved task environment
 
-### Management commands
+Management commands:
 
 ```bash
 keeprun ls
@@ -150,7 +122,9 @@ keeprun daemon install|uninstall|status
 keeprun help
 ```
 
-## Configuration
+Task references accept a task name, full task ID, or a unique short ID prefix.
+
+### Configuration
 
 Global config is stored at:
 
@@ -186,7 +160,7 @@ keeprun config set logs.tail_lines 500
 keeprun config list
 ```
 
-## Data layout
+### Data Layout
 
 `keeprun` stores runtime data under:
 
@@ -202,7 +176,7 @@ Important paths:
 - `~/.config/keeprun/run/daemon.sock`
 - `~/.config/keeprun/run/daemon.pid`
 
-## Daemon behavior
+### Daemon Behavior
 
 - The first mutating command installs or starts the per-user daemon automatically
 - Tasks restart automatically after process exit unless you stop them manually
@@ -210,7 +184,7 @@ Important paths:
 - `life` is a wall-clock deadline, not accumulated runtime
 - When a task expires, it is stopped and marked `expired`
 - Logs are stored as combined stdout/stderr with timestamps
-- `keeprun ls` shows how many times each task has been restarted
+- `keeprun ls` shows the short task ID plus restart counts
 
 You can also manage the daemon explicitly:
 
@@ -225,29 +199,114 @@ Platform integration:
 - macOS: `~/Library/LaunchAgents/com.keeprun.daemon.plist`
 - Linux: `~/.config/systemd/user/keeprund.service`
 
-## Examples
+## authrun
 
-Run a Python HTTP server for 3 days:
+`authrun` stores connection profiles and secrets, then launches supported CLIs with the right authentication context.
+
+### v1 Scope
+
+- Supported profile types: `mysql`, `mongo`, `redis`, `ssh`, `kube`
+- Supported tools: `mysql`, `mongosh`, `redis-cli`, `ssh`, `scp`, `sftp`, `kubectl`, `k9s`
+- Profile metadata is stored in `~/.config/authrun/profiles.toml`
+- Secrets are stored in `~/.config/authrun/secrets.enc`
+- The encrypted secrets file uses a master key stored in the OS keyring
+- Public SSH and Kubernetes material such as known-hosts entries, client certs, and cluster CA data can live in profile metadata while private keys, passphrases, tokens, and client keys stay encrypted
+
+Linux requires a working Secret Service-compatible keyring. There is no plaintext or passphrase fallback in v1.
+
+### Commands
 
 ```bash
-keeprun --name httpserver --life 3d python httpserver.py
+authrun add <profile> --type mysql|mongo|redis|ssh|kube [options]
+authrun list
+authrun rm <profile>
+authrun exec <profile> -- <tool> [args...]
+authrun test <profile> [--tool <tool>]
 ```
 
-Run a project command from a specific directory:
+### Common `authrun add` Options
+
+- `--type <mysql|mongo|redis|ssh|kube>`
+- `--host <host>`
+- `--port <port>`
+- `--username <username>`
+- `--database <name>`
+- `--namespace <name>`
+- `--tls`
+- `--tls-ca-file <path>`
+- `--secret-stdin`
+- `--secret-env <ENV_NAME>`
+
+Backend-specific options:
+
+- Mongo: `--auth-database <name>`
+- MySQL: `--socket <path>`
+- SSH:
+  - `--private-key-file <path>` or `--private-key-env <ENV_NAME>` or `--private-key-stdin`
+  - `--passphrase-env <ENV_NAME>` or `--passphrase-stdin`
+  - `--public-key-file <path>`
+  - `--known-hosts-file <path>`
+- Kubernetes:
+  - `--server <https://api-server>`
+  - `--cluster <name>`
+  - `--context <name>`
+  - `--namespace <name>`
+  - `--ca-file <path>`
+  - `--insecure-skip-tls-verify`
+  - token auth via `--secret-env`, `--secret-stdin`, or interactive prompt
+  - client cert auth via `--client-cert-file <path>` plus `--client-key-file <path>` or `--client-key-env <ENV_NAME>` or `--client-key-stdin`
+
+### Examples
+
+Add a MySQL profile and read the password from a terminal prompt:
 
 ```bash
-keeprun --name api --cwd /path/to/project ./bin/api-server
+authrun add user_db --type mysql --host 127.0.0.1 --port 3306 --username app --database users
 ```
 
-Pass through virtualenv information:
+Add a Redis profile from an environment variable:
 
 ```bash
-keeprun --name worker --env-pass VIRTUAL_ENV --env-pass PATH python worker.py
+export REDIS_PASSWORD='secret'
+authrun add cache --type redis --host 127.0.0.1 --port 6379 --username default --secret-env REDIS_PASSWORD
 ```
 
-Use config defaults so later runs are shorter:
+Add an SSH profile from a private key file:
 
 ```bash
-keeprun config set defaults.life 3d
-keeprun --name job python job.py
+authrun add shell --type ssh --host ssh.example.com --username ops --private-key-file ~/.ssh/id_ed25519 --known-hosts-file ~/.ssh/known_hosts
+```
+
+Add a Kubernetes profile using a bearer token:
+
+```bash
+export KUBE_TOKEN='secret-token'
+authrun add dev-cluster --type kube --server https://k8s.example.com:6443 --namespace dev --cluster dev --context dev --secret-env KUBE_TOKEN
+```
+
+List saved profiles:
+
+```bash
+authrun list
+```
+
+Run a CLI with the stored profile:
+
+```bash
+authrun exec user_db -- mysql -e 'SELECT NOW()'
+authrun exec cache -- redis-cli PING
+authrun exec docs -- mongosh
+authrun exec shell -- ssh uname -a
+authrun exec shell -- sftp
+authrun exec dev-cluster -- kubectl get pods -A
+authrun exec dev-cluster -- k9s
+```
+
+Validate a stored profile:
+
+```bash
+authrun test user_db
+authrun test cache --tool redis-cli
+authrun test shell
+authrun test dev-cluster
 ```

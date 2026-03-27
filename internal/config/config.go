@@ -9,7 +9,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/jingyugao/keep-run/internal/paths"
+	"github.com/jingyugao/devkit/internal/paths"
 )
 
 type Defaults struct {

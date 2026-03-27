@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/jingyugao/keep-run/internal/config"
+	"github.com/jingyugao/devkit/internal/config"
 )
 
 func TestParseRunRequestUsesDefaultsAndOverrides(t *testing.T) {
@@ -98,5 +98,33 @@ func TestNormalizeInterspersedFlagsRequiresFlagValue(t *testing.T) {
 	_, err := normalizeInterspersedFlags([]string{"ticker", "--lines"}, map[string]bool{"--lines": true})
 	if err == nil {
 		t.Fatal("expected missing flag value error")
+	}
+}
+
+func TestParseRunRequestRejectsReservedCommands(t *testing.T) {
+	cfg := config.Builtins()
+
+	cases := [][]string{
+		{"rm", "task"},
+		{"--", "run", "task"},
+		{filepath.Join("/usr/local/bin", "logs"), "task"},
+	}
+
+	for _, args := range cases {
+		if _, err := parseRunRequest(cfg, args); err == nil {
+			t.Fatalf("expected reserved command error for args %v", args)
+		}
+	}
+}
+
+func TestParseRunRequestAllowsNonReservedPathCommand(t *testing.T) {
+	cfg := config.Builtins()
+
+	req, err := parseRunRequest(cfg, []string{filepath.Join("/usr/local/bin", "worker"), "--serve"})
+	if err != nil {
+		t.Fatalf("parseRunRequest returned error: %v", err)
+	}
+	if got := req.Argv[0]; got != filepath.Join("/usr/local/bin", "worker") {
+		t.Fatalf("unexpected argv[0]: %q", got)
 	}
 }

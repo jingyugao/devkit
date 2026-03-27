@@ -1,6 +1,6 @@
 package ipc
 
-import "github.com/jingyugao/keep-run/internal/task"
+import "github.com/jingyugao/devkit/internal/task"
 
 type ErrorResponse struct {
 	Error string `json:"error"`

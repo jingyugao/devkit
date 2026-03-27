@@ -7,19 +7,20 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
-	"github.com/jingyugao/keep-run/internal/client"
-	"github.com/jingyugao/keep-run/internal/config"
-	"github.com/jingyugao/keep-run/internal/daemon"
-	"github.com/jingyugao/keep-run/internal/daemonctl"
-	"github.com/jingyugao/keep-run/internal/durationutil"
-	"github.com/jingyugao/keep-run/internal/ipc"
-	"github.com/jingyugao/keep-run/internal/task"
+	"github.com/jingyugao/devkit/internal/client"
+	"github.com/jingyugao/devkit/internal/config"
+	"github.com/jingyugao/devkit/internal/daemon"
+	"github.com/jingyugao/devkit/internal/daemonctl"
+	"github.com/jingyugao/devkit/internal/durationutil"
+	"github.com/jingyugao/devkit/internal/ipc"
+	"github.com/jingyugao/devkit/internal/task"
 )
 
 var reservedSubcommands = map[string]struct{}{
@@ -448,6 +449,9 @@ func parseRunRequest(cfg config.Config, args []string) (ipc.CreateTaskRequest, e
 	if len(argv) == 0 {
 		return ipc.CreateTaskRequest{}, fmt.Errorf("missing command")
 	}
+	if reservedCommandName(argv[0]) {
+		return ipc.CreateTaskRequest{}, fmt.Errorf("command %q is reserved by keeprun", filepath.Base(argv[0]))
+	}
 	if *cwd == "" {
 		currentDir, err := os.Getwd()
 		if err != nil {
@@ -470,6 +474,11 @@ func parseRunRequest(cfg config.Config, args []string) (ipc.CreateTaskRequest, e
 		Env:  buildTaskEnv(cfg, envPass, envVars),
 		Life: *life,
 	}, nil
+}
+
+func reservedCommandName(command string) bool {
+	_, ok := reservedSubcommands[filepath.Base(command)]
+	return ok
 }
 
 func displayName(record task.Record) string {

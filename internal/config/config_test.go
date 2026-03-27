@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jingyugao/keep-run/internal/paths"
+	"github.com/jingyugao/devkit/internal/paths"
 )
 
 func TestSaveLoadAndMutateConfig(t *testing.T) {
