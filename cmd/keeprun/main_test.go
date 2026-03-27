@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/jingyugao/keep-run/internal/config"
@@ -17,7 +18,6 @@ func TestParseRunRequestUsesDefaultsAndOverrides(t *testing.T) {
 	workDir := t.TempDir()
 	cfg := config.Builtins()
 	cfg.Defaults.Life = "3d"
-	cfg.Defaults.RunAfterRestart = true
 	cfg.Defaults.EnvPass = []string{"VIRTUAL_ENV"}
 
 	req, err := parseRunRequest(cfg, []string{"--env", "FOO=bar", "--cwd", workDir, "python", "httpserver.py"})
@@ -29,9 +29,6 @@ func TestParseRunRequestUsesDefaultsAndOverrides(t *testing.T) {
 	}
 	if req.Life != "3d" {
 		t.Fatalf("expected life from config, got %q", req.Life)
-	}
-	if !req.RunAfterRestart {
-		t.Fatalf("expected run_after_restart to inherit config default")
 	}
 	if got := req.Env["FOO"]; got != "bar" {
 		t.Fatalf("expected explicit env override, got %q", got)
@@ -70,5 +67,36 @@ func TestParseRunRequestShorthandCommand(t *testing.T) {
 	}
 	if len(req.Argv) != 2 || req.Argv[0] != "python" {
 		t.Fatalf("unexpected argv: %#v", req.Argv)
+	}
+}
+
+func TestNormalizeInterspersedFlagsAllowsTrailingLogsFlags(t *testing.T) {
+	got, err := normalizeInterspersedFlags([]string{"ticker", "--lines", "5", "-f"}, map[string]bool{"--lines": true})
+	if err != nil {
+		t.Fatalf("normalizeInterspersedFlags returned error: %v", err)
+	}
+
+	want := []string{"--lines", "5", "-f", "ticker"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestNormalizeInterspersedFlagsAllowsTrailingRMFlags(t *testing.T) {
+	got, err := normalizeInterspersedFlags([]string{"task-id", "--force"}, nil)
+	if err != nil {
+		t.Fatalf("normalizeInterspersedFlags returned error: %v", err)
+	}
+
+	want := []string{"--force", "task-id"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestNormalizeInterspersedFlagsRequiresFlagValue(t *testing.T) {
+	_, err := normalizeInterspersedFlags([]string{"ticker", "--lines"}, map[string]bool{"--lines": true})
+	if err == nil {
+		t.Fatal("expected missing flag value error")
 	}
 }

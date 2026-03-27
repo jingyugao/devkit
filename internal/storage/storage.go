@@ -94,6 +94,18 @@ func (s *Store) Resolve(ref string) (task.Record, error) {
 			return record, nil
 		}
 	}
+	var matches []task.Record
+	for _, record := range records {
+		if strings.HasPrefix(record.Spec.ID, ref) {
+			matches = append(matches, record)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return task.Record{}, fmt.Errorf("task id prefix %q is ambiguous", ref)
+	}
 	return task.Record{}, fmt.Errorf("task %q not found", ref)
 }
 

@@ -13,10 +13,9 @@ import (
 )
 
 type Defaults struct {
-	Life            string   `toml:"life,omitempty"`
-	RunAfterRestart bool     `toml:"run_after_restart,omitempty"`
-	StopTimeout     string   `toml:"stop_timeout,omitempty"`
-	EnvPass         []string `toml:"env_pass,omitempty"`
+	Life        string   `toml:"life,omitempty"`
+	StopTimeout string   `toml:"stop_timeout,omitempty"`
+	EnvPass     []string `toml:"env_pass,omitempty"`
 }
 
 type Logs struct {
@@ -31,10 +30,9 @@ type Config struct {
 func Builtins() Config {
 	return Config{
 		Defaults: Defaults{
-			Life:            "",
-			RunAfterRestart: false,
-			StopTimeout:     "10s",
-			EnvPass:         []string{},
+			Life:        "",
+			StopTimeout: "10s",
+			EnvPass:     []string{},
 		},
 		Logs: Logs{
 			TailLines: 200,
@@ -89,7 +87,6 @@ func Keys() []string {
 	keys := []string{
 		"defaults.env_pass",
 		"defaults.life",
-		"defaults.run_after_restart",
 		"defaults.stop_timeout",
 		"logs.tail_lines",
 	}
@@ -101,11 +98,6 @@ func Get(cfg Config, key string) (string, error) {
 	switch key {
 	case "defaults.life":
 		return cfg.Defaults.Life, nil
-	case "defaults.run_after_restart":
-		if cfg.Defaults.RunAfterRestart {
-			return "true", nil
-		}
-		return "false", nil
 	case "defaults.stop_timeout":
 		return cfg.Defaults.StopTimeout, nil
 	case "defaults.env_pass":
@@ -121,15 +113,6 @@ func Set(cfg *Config, key string, value string) error {
 	switch key {
 	case "defaults.life":
 		cfg.Defaults.Life = strings.TrimSpace(value)
-	case "defaults.run_after_restart":
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "true", "1", "yes", "on":
-			cfg.Defaults.RunAfterRestart = true
-		case "false", "0", "no", "off":
-			cfg.Defaults.RunAfterRestart = false
-		default:
-			return fmt.Errorf("invalid boolean %q", value)
-		}
 	case "defaults.stop_timeout":
 		cfg.Defaults.StopTimeout = strings.TrimSpace(value)
 	case "defaults.env_pass":
@@ -164,8 +147,6 @@ func Unset(cfg *Config, key string) error {
 	switch key {
 	case "defaults.life":
 		cfg.Defaults.Life = builtins.Defaults.Life
-	case "defaults.run_after_restart":
-		cfg.Defaults.RunAfterRestart = builtins.Defaults.RunAfterRestart
 	case "defaults.stop_timeout":
 		cfg.Defaults.StopTimeout = builtins.Defaults.StopTimeout
 	case "defaults.env_pass":

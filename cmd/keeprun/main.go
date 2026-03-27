@@ -47,6 +47,34 @@ func (m *multiFlag) Set(value string) error {
 	return nil
 }
 
+func normalizeInterspersedFlags(args []string, valueFlags map[string]bool) ([]string, error) {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			name, _, hasValue := strings.Cut(arg, "=")
+			flags = append(flags, arg)
+			if valueFlags[name] && !hasValue {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("flag needs an argument: %s", name)
+				}
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positionals = append(positionals, arg)
+	}
+
+	return append(flags, positionals...), nil
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -110,7 +138,7 @@ func runCreate(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\t%s\t%s\n", record.Spec.ID, displayName(record), record.State.RuntimeState)
+	fmt.Printf("%s\t%s\t%s\n", record.DisplayID(), displayName(record), record.State.RuntimeState)
 	return nil
 }
 
@@ -125,18 +153,18 @@ func runList(runningOnly bool) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tSTATE\tPID\tRESTART\tEXPIRES\tCOMMAND")
+	fmt.Fprintln(tw, "ID\tNAME\tSTATE\tPID\tRESTARTS\tEXPIRES\tCOMMAND")
 	for _, record := range records {
 		expires := "-"
 		if record.Spec.ExpiresAt != nil {
 			expires = record.Spec.ExpiresAt.Format(time.RFC3339)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%t\t%s\t%s\n",
-			record.Spec.ID,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+			record.DisplayID(),
 			displayName(record),
 			record.State.RuntimeState,
 			record.State.PID,
-			record.Spec.RunAfterRestart,
+			record.State.RestartCount,
 			expires,
 			strings.Join(record.Spec.Argv, " "),
 		)
@@ -145,7 +173,22 @@ func runList(runningOnly bool) error {
 }
 
 func runStartStop(action string, args []string) error {
-	if len(args) != 1 {
+	fs := flag.NewFlagSet(action, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	all := fs.Bool("all", false, "")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *all {
+		if action != "start" {
+			return fmt.Errorf("--all is only supported for start")
+		}
+		if len(fs.Args()) != 0 {
+			return fmt.Errorf("start --all does not take a task id or name")
+		}
+		return runStartAll()
+	}
+	if len(fs.Args()) != 1 {
 		return fmt.Errorf("%s requires a task id or name", action)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -160,22 +203,49 @@ func runStartStop(action string, args []string) error {
 		err    error
 	)
 	if action == "start" {
-		record, err = c.StartTask(ctx, args[0])
+		record, err = c.StartTask(ctx, fs.Args()[0])
 	} else {
-		record, err = c.StopTask(ctx, args[0])
+		record, err = c.StopTask(ctx, fs.Args()[0])
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\t%s\t%s\n", record.Spec.ID, displayName(record), record.State.RuntimeState)
+	fmt.Printf("%s\t%s\t%s\n", record.DisplayID(), displayName(record), record.State.RuntimeState)
 	return nil
+}
+
+func runStartAll() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := daemonctl.Ensure(ctx, true); err != nil {
+		return err
+	}
+	records, err := client.New().StartAll(ctx)
+	if err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tSTATE\tRESTARTS")
+	for _, record := range records {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n",
+			record.DisplayID(),
+			displayName(record),
+			record.State.RuntimeState,
+			record.State.RestartCount,
+		)
+	}
+	return tw.Flush()
 }
 
 func runRemove(args []string) error {
 	fs := flag.NewFlagSet("rm", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	force := fs.Bool("force", false, "")
-	if err := fs.Parse(args); err != nil {
+	normalizedArgs, err := normalizeInterspersedFlags(args, nil)
+	if err != nil {
+		return err
+	}
+	if err := fs.Parse(normalizedArgs); err != nil {
 		return err
 	}
 	if len(fs.Args()) != 1 {
@@ -198,7 +268,11 @@ func runLogs(args []string) error {
 	fs.SetOutput(io.Discard)
 	follow := fs.Bool("f", false, "")
 	lines := fs.Int("lines", cfg.Logs.TailLines, "")
-	if err := fs.Parse(args); err != nil {
+	normalizedArgs, err := normalizeInterspersedFlags(args, map[string]bool{"--lines": true})
+	if err != nil {
+		return err
+	}
+	if err := fs.Parse(normalizedArgs); err != nil {
 		return err
 	}
 	if len(fs.Args()) != 1 {
@@ -362,7 +436,6 @@ func parseRunRequest(cfg config.Config, args []string) (ipc.CreateTaskRequest, e
 	fs.SetOutput(io.Discard)
 	name := fs.String("name", "", "")
 	life := fs.String("life", cfg.Defaults.Life, "")
-	runAfterRestart := fs.Bool("run-after-restart", cfg.Defaults.RunAfterRestart, "")
 	cwd := fs.String("cwd", "", "")
 	var envVars multiFlag
 	var envPass multiFlag
@@ -391,12 +464,11 @@ func parseRunRequest(cfg config.Config, args []string) (ipc.CreateTaskRequest, e
 		}
 	}
 	return ipc.CreateTaskRequest{
-		Name:            *name,
-		Argv:            argv,
-		Cwd:             *cwd,
-		Env:             buildTaskEnv(cfg, envPass, envVars),
-		Life:            *life,
-		RunAfterRestart: *runAfterRestart,
+		Name: *name,
+		Argv: argv,
+		Cwd:  *cwd,
+		Env:  buildTaskEnv(cfg, envPass, envVars),
+		Life: *life,
 	}, nil
 }
 
@@ -414,6 +486,7 @@ func printHelp() {
   keeprun ls
   keeprun ps
   keeprun start <id|name>
+  keeprun start --all
   keeprun stop <id|name>
   keeprun rm <id|name> [--force]
   keeprun logs <id|name> [-f] [--lines N]
