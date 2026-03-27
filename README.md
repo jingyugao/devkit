@@ -294,8 +294,8 @@ authrun test shell
 Import a raw SSH target directly:
 
 ```bash
-authrun import ssh wsl@aliyun.gaojingyu.site -oPort=23456 -i ~/.ssh/yuebai
-authrun import ssh root@aliyun.gaojingyu.site -i ~/.ssh/yuebai
+authrun import ssh wsl@aliyun.gaojingyu.site -oPort=23456 -i ~/.ssh/id_ed25519
+authrun import ssh root@aliyun.gaojingyu.site -i ~/.ssh/id_ed25519
 ```
 
 Add a Kubernetes profile using a bearer token:
@@ -353,10 +353,12 @@ Shortcut mode is also available:
 authrun mysql -e 'SELECT NOW()'
 authrun k9s
 authrun ssh root@aliyun.gaojingyu.site
+authrun ssh root.aliyun.gaojingyu.site
 ```
 
 `authrun k9s` merges all imported kube profiles into a temporary kubeconfig. `authrun kubectl ...` still requires an explicit profile if more than one kube profile is configured.
-`authrun ssh [ssh args...]` is compatible with normal `ssh` syntax. Raw targets like `authrun ssh root@aliyun.gaojingyu.site` are passed through to native SSH resolution. If you want authrun-managed SSH secrets, use `authrun exec <profile> -- ssh` or `authrun ssh <stored-profile-name>`.
+`authrun ssh [ssh args...]` is compatible with normal `ssh` syntax. Raw targets like `authrun ssh root@aliyun.gaojingyu.site` are passed through to native SSH resolution.
+If you want authrun-managed SSH secrets, use `authrun exec <profile> -- ssh` or `authrun ssh <stored-profile-name>` such as `authrun ssh root.aliyun.gaojingyu.site`.
 
 Validate a stored profile:
 
